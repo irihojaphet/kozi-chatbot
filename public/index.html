@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kozi AI Agent</title>
+    <link rel="stylesheet" href="css/dashboard.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Left Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h2>Chats</h2>
+                <button class="menu-toggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+            </div>
+            
+            <button class="new-chat-btn" onclick="startNewChat()">
+                <i class="fas fa-plus"></i>
+                New Chat
+            </button>
+            
+            <div class="chat-history">
+                <div class="history-header">HISTORY</div>
+                <div class="history-content" id="chatHistory">
+                    <div class="empty-history">
+                        <p>No chat history yet</p>
+                        <p class="subtext">Start a new conversation</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Chat Area -->
+        <div class="main-chat">
+            <div class="chat-header">
+                <div class="agent-info">
+                    <h3>Kozi AI Agent</h3>
+                    <div class="status-indicator">
+                        <span class="status-dot online"></span>
+                        <span>Online</span>
+                    </div>
+                </div>
+                <button class="theme-toggle" onclick="toggleTheme()">
+                    <i class="fas fa-moon"></i>
+                </button>
+            </div>
+            
+            <div class="chat-messages" id="chatMessages">
+                <div class="welcome-screen">
+                    <div class="welcome-content">
+                        <h1>Good to see you! What would you like to explore today?</h1>
+                        <p>I'm here to help you with everything related to Kozi platform</p>
+                        
+                        <div class="suggestion-cards">
+                            <div class="suggestion-card" onclick="sendSuggestion('How do I complete my profile?')">
+                                <i class="fas fa-user"></i>
+                                <span>Complete Profile</span>
+                            </div>
+                            <div class="suggestion-card" onclick="sendSuggestion('Help me write a professional CV')">
+                                <i class="fas fa-file-alt"></i>
+                                <span>CV Writing Help</span>
+                            </div>
+                            <div class="suggestion-card" onclick="sendSuggestion('How can I find and apply for jobs?')">
+                                <i class="fas fa-briefcase"></i>
+                                <span>Find Jobs</span>
+                            </div>
+                            <div class="suggestion-card" onclick="sendSuggestion('What documents do I need to upload?')">
+                                <i class="fas fa-upload"></i>
+                                <span>Upload Documents</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chat-input-container">
+                <div class="chat-input">
+                    <input type="text" id="messageInput" placeholder="Ask me anything about Kozi..." disabled>
+                    <button id="sendBtn" onclick="sendMessage()" disabled>
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/dashboard.js"></script>
+</body>
+</html>
