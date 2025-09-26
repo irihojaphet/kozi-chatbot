@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kozi AI Agent</title>
     <link rel="stylesheet" href="css/dashboard.css">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
     <div class="app-container">
@@ -18,7 +17,8 @@
                 </button>
             </div>
             
-            <button class="new-chat-btn" onclick="startNewChat()">
+            <!-- removed onclick; wired in JS -->
+            <button class="new-chat-btn">
                 <i class="fas fa-plus"></i>
                 New Chat
             </button>
@@ -44,31 +44,33 @@
                         <span>Online</span>
                     </div>
                 </div>
-                <button class="theme-toggle" onclick="toggleTheme()">
+                <!-- removed onclick; wired in JS -->
+                <button class="theme-toggle">
                     <i class="fas fa-moon"></i>
                 </button>
             </div>
             
             <div class="chat-messages" id="chatMessages">
+                <!-- Welcome screen rendered in DOM (no inline handlers) -->
                 <div class="welcome-screen">
                     <div class="welcome-content">
                         <h1>Good to see you! What would you like to explore today?</h1>
                         <p>I'm here to help you with everything related to Kozi platform</p>
                         
                         <div class="suggestion-cards">
-                            <div class="suggestion-card" onclick="sendSuggestion('How do I complete my profile?')">
+                            <div class="suggestion-card" data-message="How do I complete my profile?">
                                 <i class="fas fa-user"></i>
                                 <span>Complete Profile</span>
                             </div>
-                            <div class="suggestion-card" onclick="sendSuggestion('Help me write a professional CV')">
+                            <div class="suggestion-card" data-message="Help me write a professional CV">
                                 <i class="fas fa-file-alt"></i>
                                 <span>CV Writing Help</span>
                             </div>
-                            <div class="suggestion-card" onclick="sendSuggestion('How can I find and apply for jobs?')">
+                            <div class="suggestion-card" data-message="How can I find and apply for jobs?">
                                 <i class="fas fa-briefcase"></i>
                                 <span>Find Jobs</span>
                             </div>
-                            <div class="suggestion-card" onclick="sendSuggestion('What documents do I need to upload?')">
+                            <div class="suggestion-card" data-message="What documents do I need to upload?">
                                 <i class="fas fa-upload"></i>
                                 <span>Upload Documents</span>
                             </div>
@@ -80,7 +82,8 @@
             <div class="chat-input-container">
                 <div class="chat-input">
                     <input type="text" id="messageInput" placeholder="Ask me anything about Kozi..." disabled>
-                    <button id="sendBtn" onclick="sendMessage()" disabled>
+                    <!-- removed onclick; wired in JS -->
+                    <button id="sendBtn" disabled>
                         <i class="fas fa-paper-plane"></i>
                     </button>
                 </div>

@@ -20,9 +20,9 @@ class ChatService {
     try {
       const sessionId = uuidv4();
       await ChatSession.create(userId, sessionId, 'employee');
-      
+
       logger.info('Chat session started', { userId, sessionId });
-      
+
       return {
         session_id: sessionId,
         message: CHAT_RESPONSES.WELCOME
@@ -37,27 +37,37 @@ class ChatService {
     try {
       // Add user message to session
       await ChatSession.addMessage(sessionId, message, 'user');
-      
-      // Check if message is Kozi-related
-      if (!this._isKoziRelated(message)) {
+
+      // --- DEBUG: show inbound payload
+      logger.info('chat-inbound', { sessionId, userId, msgPreview: String(message).slice(0, 140) });
+
+      // Check if message is Kozi-related (more tolerant)
+      const isKozi = this._isKoziRelated(message);
+
+      // --- DEBUG: show kozi routing decision
+      logger.info('chat-scope-decision', { sessionId, userId, isKoziRelated: isKozi });
+
+      if (!isKozi) {
         const response = CHAT_RESPONSES.REDIRECT_SUPPORT;
         await ChatSession.addMessage(sessionId, response, 'assistant');
-        
-        return { message: response };
+
+        // --- DEBUG: show outbound support response
+        logger.info('chat-outbound-support', { sessionId, userId });
+        return { message: response, debug: { scope: 'NO', hits: 0 } };
       }
 
       // Get user profile context
       const profileStatus = await this.profileService.getProfileStatus(userId);
-      
+
       // Get chat history
       const session = await ChatSession.findBySessionId(sessionId);
       const recentMessages = session.messages.slice(-10); // Last 10 messages
-      
+
       // Generate contextual response
       const response = await this.ragService.generateContextualResponse(
         message,
         recentMessages,
-        { 
+        {
           profileCompletion: profileStatus.completion_percentage,
           missingFields: profileStatus.missing_fields
         }
@@ -65,7 +75,7 @@ class ChatService {
 
       // Add assistant response to session
       await ChatSession.addMessage(sessionId, response, 'assistant');
-      
+
       // Update session context with profile info
       await ChatSession.updateContext(sessionId, {
         last_profile_completion: profileStatus.completion_percentage,
@@ -74,13 +84,13 @@ class ChatService {
 
       logger.info('Message processed', { sessionId, userId, messageLength: message.length });
 
-      return { message: response };
+      return { message: response, debug: { scope: 'YES' } };
     } catch (error) {
       logger.error('Message processing failed', { error: error.message, sessionId, userId });
-      
+
       const errorResponse = CHAT_RESPONSES.ERROR_GENERIC;
       await ChatSession.addMessage(sessionId, errorResponse, 'assistant');
-      
+
       return { message: errorResponse };
     }
   }
@@ -88,7 +98,7 @@ class ChatService {
   async getSessionHistory(sessionId) {
     try {
       const session = await ChatSession.findBySessionId(sessionId);
-      
+
       if (!session) {
         throw new Error('Chat session not found');
       }
@@ -108,7 +118,7 @@ class ChatService {
     try {
       await ChatSession.deactivate(sessionId);
       logger.info('Chat session ended', { sessionId });
-      
+
       return { message: 'Session ended. Thank you for using Kozi!' };
     } catch (error) {
       logger.error('Failed to end session', { error: error.message, sessionId });
@@ -125,17 +135,47 @@ class ChatService {
     }
   }
 
+  /**
+   * Heuristic: decide if a message is Kozi-dashboard related.
+   * More tolerant:
+   * - Accept common greetings/help intents (user is already inside Kozi app)
+   * - Accept typical profile/upload/jobs/CV words without needing "kozi"
+   * - Simple regex for "finish/complete/100%" phrasing
+   */
   _isKoziRelated(message) {
+    const text = String(message || '').toLowerCase().trim();
+
+    if (!text) return false;
+
+    // Friendly greetings / general help that should NOT bounce to support
+    const greetingOrHelp = /\b(hi|hello|hey|good (morning|afternoon|evening)|help|assist|guide|question|please)\b/.test(text);
+    if (greetingOrHelp) return true;
+
+    // Explicit task intents
     const koziKeywords = [
-      'profile', 'cv', 'job', 'work', 'employment', 'upload', 'document',
-      'id', 'photo', 'complete', 'apply', 'kozi', 'salary', 'employer',
-      'experience', 'skills', 'education', 'phone', 'location', 'name'
+      // profile/account
+      'profile', 'account', 'complete', 'completion', 'progress', 'percentage', '100%',
+      // uploads / identity
+      'upload', 'document', 'doc', 'file', 'id', 'national id', 'nid', 'passport', 'photo', 'picture',
+      // cv / resume
+      'cv', 'resume', 'summary', 'experience', 'skills', 'education',
+      // jobs / applications
+      'job', 'jobs', 'work', 'employment', 'apply', 'application', 'vacancy', 'position',
+      // platform cues
+      'kozi', 'dashboard'
     ];
 
-    const messageWords = message.toLowerCase().split(/\s+/);
-    return koziKeywords.some(keyword => 
-      messageWords.some(word => word.includes(keyword))
-    );
+    if (koziKeywords.some(kw => text.includes(kw))) return true;
+
+    // Common phrasing that implies Kozi tasks without explicit keywords
+    const impliedTasks =
+      /(finish|complete|reach)\s+(my\s+)?(profile|account)|reach\s*100\s*%/.test(text) ||
+      /(upload|add)\s+(my\s+)?(id|photo|cv|resume|documents?)/.test(text) ||
+      /(help|how).*(profile|cv|resume|job|apply|upload)/.test(text);
+
+    if (impliedTasks) return true;
+
+    return false;
   }
 
   _extractTopics(message) {
@@ -147,11 +187,11 @@ class ChatService {
       help: ['help', 'support', 'assist', 'guide']
     };
 
-    const messageWords = message.toLowerCase().split(/\s+/);
+    const messageWords = String(message || '').toLowerCase().split(/\s+/);
     const detectedTopics = [];
 
     Object.entries(topicMap).forEach(([topic, keywords]) => {
-      if (keywords.some(keyword => 
+      if (keywords.some(keyword =>
         messageWords.some(word => word.includes(keyword))
       )) {
         detectedTopics.push(topic);
