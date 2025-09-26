@@ -1,3 +1,5 @@
+const path = require('path');
+const fs = require('fs');
 const RAGService = require('./ragService');
 const logger = require('../core/utils/logger');
 
@@ -13,25 +15,28 @@ class KnowledgeLoader {
   async loadKoziKnowledge() {
     try {
       await this.initialize();
-      
+
       // Core Kozi Information
       await this.loadCoreInfo();
-      
+
       // Profile Completion Guidance
       await this.loadProfileGuidance();
-      
+
       // Job Application Process
       await this.loadJobApplicationInfo();
-      
+
       // CV Writing Guidance
       await this.loadCVGuidance();
-      
+
       // Document Upload Process
       await this.loadDocumentInfo();
-      
-      // Contract and Legal Information (from your documents)
+
+      // Contract and Legal Information (seeded text)
       await this.loadContractInfo();
-      
+
+      // NEW: Index local PDFs placed under data/docs
+      await this.loadLocalDocuments();
+
       logger.info('Kozi knowledge base loaded successfully');
       return true;
     } catch (error) {
@@ -167,6 +172,43 @@ class KnowledgeLoader {
     for (const item of contractInfo) {
       await this.ragService.addKnowledgeDocument(item.id, item.content, item.metadata);
     }
+  }
+
+  // NEW: scan data/docs and index PDFs
+  async loadLocalDocuments() {
+    const docsDir = path.join(process.cwd(), 'data', 'docs');
+    if (!fs.existsSync(docsDir)) {
+      logger.info('knowledge-loader: no local docs folder found', { docsDir });
+      return;
+    }
+
+    const files = fs.readdirSync(docsDir).filter(f => f.toLowerCase().endsWith('.pdf'));
+    if (!files.length) {
+      logger.info('knowledge-loader: no PDFs found in docs folder', { docsDir });
+      return;
+    }
+
+    for (const filename of files) {
+      const abs = path.join(docsDir, filename);
+      try {
+        await this.ragService.indexFile(abs, {
+          source: 'pdf',
+          tags: this._tagsFor(filename)
+        });
+        logger.info('Knowledge document added', { id: filename, type: 'pdf' });
+      } catch (e) {
+        logger.error('Failed to index PDF', { file: filename, error: e.message });
+      }
+    }
+  }
+
+  _tagsFor(filename) {
+    const f = filename.toLowerCase();
+    if (f.includes('agreement')) return ['contract', 'house cleaner', 'fees', 'payment', 'terms'];
+    if (f.includes('request')) return ['job provider', 'form', 'requirements', 'fees'];
+    if (f.includes('guidelines')) return ['worker', 'guidelines', 'conduct', 'benefits', 'process'];
+    if (f.includes('business profile')) return ['company', 'about', 'services', 'contact'];
+    return [];
   }
 }
 

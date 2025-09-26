@@ -28,19 +28,29 @@ class RAGService {
     }
   }
 
-  async getRelevantContext(query, limit = 3) {
+  // NEW: expose file indexing to KnowledgeLoader
+  async indexFile(absPath, metadata = {}) {
+    return this.vectorService.indexFile(absPath, metadata);
+  }
+
+  async getRelevantContext(query, limit = 6) {
     try {
-      const results = await this.vectorService.search(query, limit);
-      
+      const normalized = this._normalizeQuery(query);
+      const results = await this.vectorService.search(normalized, limit);
+
+      // Lower the cut-off to catch paraphrases (was 0.7)
+      const MIN = 0.55;
+
       const context = results
-        .filter(result => result.similarity > 0.7) // Only include relevant results
+        .filter(result => result.similarity >= MIN)
         .map(result => result.text)
         .join('\n\n');
 
-      logger.info('Retrieved relevant context', { 
-        query, 
+      logger.info('Retrieved relevant context', {
+        query,
+        normalized,
         resultsCount: results.length,
-        relevantCount: results.filter(r => r.similarity > 0.7).length 
+        relevantCount: results.filter(r => r.similarity >= MIN).length
       });
 
       return context;
@@ -54,19 +64,19 @@ class RAGService {
     try {
       // Get relevant knowledge from vector store
       const relevantContext = await this.getRelevantContext(userMessage);
-      
+
       // Build system prompt with context
       const systemPrompt = this._buildSystemPrompt(relevantContext, userContext);
-      
+
       // Generate response using OpenAI
       const response = await this.openaiService.generateResponse(
         [{ sender: 'user', message: userMessage }, ...chatHistory],
         systemPrompt
       );
 
-      logger.info('Contextual response generated', { 
+      logger.info('Contextual response generated', {
         hasContext: relevantContext.length > 0,
-        userMessageLength: userMessage.length 
+        userMessageLength: userMessage.length
       });
 
       return response;
@@ -105,6 +115,21 @@ If unrelated question → redirect: "Please contact our Support Team 📧 suppor
     }
 
     return basePrompt + contextSection + userSection;
+  }
+
+  // Normalize common user phrasing to improve matching
+  _normalizeQuery(text) {
+    let t = String(text || '');
+
+    // “registration fee” ≈ “service fee” / “fee”, expand synonyms to improve hits
+    t = t.replace(/\bregistration fee(s)?\b/gi, 'service fee');
+    t = t.replace(/\bservice fee(s)?\b/gi, 'service fee fees price prices cost costs');
+
+    // other light expansions that help
+    t = t.replace(/\bprice(s)?\b/gi, 'price prices cost costs fee fees');
+    t = t.replace(/\bcost(s)?\b/gi, 'cost costs price prices fee fees');
+
+    return t;
   }
 }
 

@@ -48,12 +48,19 @@ class ChatService {
       logger.info('chat-scope-decision', { sessionId, userId, isKoziRelated: isKozi });
 
       if (!isKozi) {
-        const response = CHAT_RESPONSES.REDIRECT_SUPPORT;
-        await ChatSession.addMessage(sessionId, response, 'assistant');
+        // Friendly handling for positive/closing feedback (e.g., "great", "thanks")
+        if (this._isPositiveClosure(message)) {
+          const closing = this._friendlyClosing();
+          await ChatSession.addMessage(sessionId, closing, 'assistant');
+          logger.info('chat-outbound-closing', { sessionId, userId });
+          return { message: closing, debug: { scope: 'NO', reason: 'positive_closure' } };
+        }
 
-        // --- DEBUG: show outbound support response
-        logger.info('chat-outbound-support', { sessionId, userId });
-        return { message: response, debug: { scope: 'NO', hits: 0 } };
+        // Gentle guidance for unrelated topics (not rude; include what we do + support)
+        const guidance = this._gentleRedirect();
+        await ChatSession.addMessage(sessionId, guidance, 'assistant');
+        logger.info('chat-outbound-gentle-redirect', { sessionId, userId });
+        return { message: guidance, debug: { scope: 'NO', reason: 'unrelated' } };
       }
 
       // Get user profile context
@@ -162,7 +169,8 @@ class ChatService {
       // jobs / applications
       'job', 'jobs', 'work', 'employment', 'apply', 'application', 'vacancy', 'position',
       // platform cues
-      'kozi', 'dashboard'
+      'kozi', 'dashboard',
+      'fee','fees','service fee','registration','price','pricing','cost','costs'
     ];
 
     if (koziKeywords.some(kw => text.includes(kw))) return true;
@@ -176,6 +184,34 @@ class ChatService {
     if (impliedTasks) return true;
 
     return false;
+  }
+
+  // Detect short positive/closing feedback so we respond warmly, not with support line
+  _isPositiveClosure(message) {
+    const t = String(message || '').toLowerCase().trim();
+    if (!t) return false;
+    return /\b(thanks|thank you|great|awesome|nice|cool|perfect|got it|okay|ok|good|sounds good|cheers|appreciated)\b/.test(t)
+        || /\b(bye|goodbye|see you|later)\b/.test(t);
+  }
+
+  _friendlyClosing() {
+    return (
+      "You're welcome! 🙌 If you need anything else on your Kozi dashboard—profile completion, document uploads, job search, or CV help—just ask.\n" +
+      "For topics outside Kozi, our Support Team is happy to help: 📧 support@kozi.rw | ☎ +250 788 123 456.\n" +
+      "✨ Every completed profile and polished CV gives you more visibility with employers."
+    );
+  }
+
+  _gentleRedirect() {
+    return (
+      "Here’s what I can help you with on Kozi:\n" +
+      "• Completing or updating your profile\n" +
+      "• Uploading your ID, CV, and profile photo\n" +
+      "• Searching and applying for jobs\n" +
+      "• Creating or improving a professional CV\n\n" +
+      "If your question is outside the Kozi platform, our Support Team can assist you further:\n" +
+      "📧 support@kozi.rw | ☎ +250 788 123 456."
+    );
   }
 
   _extractTopics(message) {

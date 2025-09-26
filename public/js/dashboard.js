@@ -324,19 +324,28 @@ function bindSuggestionCardClicks() {
 // Utility function to format messages with markdown support
 function formatMessage(message) {
     if (!message) return '';
-    
-    let formatted = message
-        // Bold text: **text** -> <strong>text</strong>
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        // Convert numbered lists: "1. **Step**" -> proper list
-        .replace(/(\d+\.\s*\*\*[^*]+\*\*[^0-9]*)/g, '<div class="chat-step">$1</div>')
-        // Line breaks for better formatting
-        .replace(/(\d+\.\s)/g, '<br><strong>$1</strong>')
-        // Clean up extra breaks at start
-        .replace(/^<br>/, '');
-    
-    return formatted;
+
+    let m = String(message).replace(/\r\n/g, '\n'); // normalize line endings
+
+    // 1) Convert Markdown headings to bold (remove leading ### etc.)
+    //    Matches lines starting with 1–6 hashes.
+    m = m.replace(/^#{1,6}\s*(.+)$/gm, '<strong>$1</strong>');
+
+    // 2) Bullet lists: "- text" or "* text" -> a styled row
+    m = m.replace(/^[\-\*]\s+(.+)$/gm, '<div class="chat-step">• $1</div>');
+
+    // 3) Numbered lists: "1. text" -> number in bold + text
+    m = m.replace(/^(\d+)\.\s+(.+)$/gm, '<div class="chat-step"><strong>$1.</strong> $2</div>');
+
+    // 4) Bold: **text** -> <strong>text</strong>
+    m = m.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+    // 5) Remaining newlines -> <br> (after list/heading transforms)
+    m = m.replace(/\n/g, '<br>');
+
+    return m;
 }
+
 
 // Add chat history management with smart naming
 function addToChatHistory(sessionId, title) {
