@@ -34,6 +34,12 @@ class KnowledgeLoader {
       // Contract and Legal Information (seeded text)
       await this.loadContractInfo();
 
+      // NEW: Fees & Payments (concise, grounded in Agreement)
+      await this.loadFeesInfo();
+
+      // NEW: Atomic knowledge pack (concise Q/A facts from PDFs)
+      await this.loadKoziKnowledgePack();
+
       // NEW: Index local PDFs placed under data/docs
       await this.loadLocalDocuments();
 
@@ -170,6 +176,187 @@ class KnowledgeLoader {
     ];
 
     for (const item of contractInfo) {
+      await this.ragService.addKnowledgeDocument(item.id, item.content, item.metadata);
+    }
+  }
+
+  // NEW: concise Fees & Payments seed from Agreement
+  async loadFeesInfo() {
+    const content = `
+FEES & PAYMENTS (HOUSE CLEANER AGREEMENT – KOZI RWANDA)
+
+• One-time administrative service fee: 40,000 RWF (non-refundable) – covers vetting/background checks, contract preparation, onboarding/orientation, and access to ongoing management/support.
+• Salary flow: Client pays salary to Kozi; Kozi disburses to worker (no direct payment to worker).
+• Payment deadline: Salary due on or before the agreed date each month.
+• Invoice rule: Settle invoices within 3 calendar days; late fee 5% per week; legal recovery after 30 days (client bears recovery/legal costs).
+• Replacement: One free replacement within the first 30 days for valid issues; beyond 30 days a new service fee may apply.
+• Early termination by client: 5 days’ written notice; no refund of the one-time fee.
+• Direct payment prohibition: Paying worker directly is a breach; damages = 3–6 months of salary plus legal/administrative costs.
+• Payment methods (as listed in the agreement at time of writing): MoMo code 067788 (Account Name: SANSON GROUP); Bank of Kigali account 100185006268 (Account Name: SANSON GROUP).
+    `.trim();
+
+    await this.ragService.addKnowledgeDocument(
+      'fees-house-cleaner-agreement',
+      content,
+      { type: 'policy', category: 'fees', source: 'agreement' }
+    );
+  }
+
+  // NEW: Atomic knowledge snippets from PDFs
+  async loadKoziKnowledgePack() {
+    const koziKnowledgePack = [
+      // Agreement-derived
+      {
+        id: 'salary-payment-terms-agreement',
+        content:
+          'Client pays salary to Kozi; Kozi disburses to the worker. Salary must be paid on or before the agreed monthly date (no direct payment to the worker).',
+        metadata: { type: 'policy', category: 'payments', source: 'agreement' }
+      },
+      {
+        id: 'invoice-deadline-and-penalties',
+        content:
+          'Invoices must be settled within 3 calendar days. Late fee: 5% of total invoice per week of delay. Non-payment beyond 30 days may trigger legal recovery; client bears recovery/legal costs.',
+        metadata: { type: 'policy', category: 'payments', source: 'agreement' }
+      },
+      {
+        id: 'direct-payment-prohibition-and-penalty',
+        content:
+          'Direct payment to the outsourced worker is prohibited. Breach penalty: damages equal to not less than 3 months and up to 6 months of the worker’s salary, plus legal/administrative costs.',
+        metadata: { type: 'policy', category: 'compliance', source: 'agreement' }
+      },
+      {
+        id: 'employment-scope-and-duties-housecleaner',
+        content:
+          'Scope (example duties for House Cleaner/House Manager): clean house, do laundry & ironing, organize and keep house in order. No additional duties without Kozi consultation.',
+        metadata: { type: 'contract', category: 'duties', source: 'agreement' }
+      },
+      {
+        id: 'employment-term-and-schedule',
+        content:
+          'Term: 6 months from signing. Public holidays and rest days respected unless pre-arranged. Example terms shown: Monday–Friday, 8:00–14:00; agreed salary example 60,000 RWF.',
+        metadata: { type: 'contract', category: 'terms', source: 'agreement' }
+      },
+      {
+        id: 'monitoring-and-check-ins',
+        content:
+          'Kozi performs regular follow-ups with worker and client; may visit the home or conduct phone check-ins to ensure service delivery and worker welfare.',
+        metadata: { type: 'process', category: 'monitoring', source: 'agreement' }
+      },
+      {
+        id: 'replacement-policy-window',
+        content:
+          'If valid issues arise, Kozi may offer one free replacement within the first 30 days. Beyond 30 days, a new service fee may apply. Replacement target ~5 business days.',
+        metadata: { type: 'policy', category: 'replacement', source: 'agreement' }
+      },
+      {
+        id: 'early-termination-no-refund',
+        content:
+          'Early termination by client: 5 days written notice required. No refund of the one-time service fee.',
+        metadata: { type: 'policy', category: 'termination', source: 'agreement' }
+      },
+      {
+        id: 'legal-support-policy',
+        content:
+          'In incidents involving theft, damage, or loss, Kozi provides worker registration info and documents to support legal proceedings; Kozi is not financially responsible for losses. Client should take security measures and report crimes to authorities.',
+        metadata: { type: 'policy', category: 'legal-support', source: 'agreement' }
+      },
+      {
+        id: 'payroll-management-obligation',
+        content:
+          'Client must create and maintain an account on Kozi’s platform for payroll management; workers are assigned to the client in-system; salary disbursement and records are managed on-platform for transparency.',
+        metadata: { type: 'policy', category: 'platform', source: 'agreement' }
+      },
+      {
+        id: 'confidentiality-and-privacy',
+        content:
+          'Both parties must keep personal, professional, and contractual information confidential; no disclosure to third parties without written consent.',
+        metadata: { type: 'policy', category: 'privacy', source: 'agreement' }
+      },
+      {
+        id: 'governing-law',
+        content:
+          'Governing law: Republic of Rwanda — Labour Law No. 66/2018 of 30/08/2018 and relevant Civil Code provisions.',
+        metadata: { type: 'policy', category: 'legal', source: 'agreement' }
+      },
+
+      // Business profile-derived
+      {
+        id: 'kozi-about-mission-vision',
+        content:
+          'Kozi is a digital platform connecting employees with employers, founded in 2021. Mission: data-driven recruitment that is faster, fairer, and more reliable. Vision: seamless, modern hiring experiences.',
+        metadata: { type: 'company_info', category: 'about', source: 'business_profile' }
+      },
+      {
+        id: 'kozi-services-overview',
+        content:
+          'Kozi simplifies recruitment using smart, data-driven matching; improves communication; accelerates hiring for businesses and job seekers.',
+        metadata: { type: 'company_info', category: 'services', source: 'business_profile' }
+      },
+      {
+        id: 'beneficiaries-who-uses-kozi',
+        content:
+          'Who benefits: Employers seeking talent and efficient hiring; Job Seekers looking for opportunities matching skills/experience.',
+        metadata: { type: 'company_info', category: 'audience', source: 'business_profile' }
+      },
+      {
+        id: 'worker-categories-and-examples',
+        content:
+          'Worker categories: Advanced (e.g., graphic designer, accountant, chef, software developer, marketing expert) and Basic (e.g., professional cleaners, housemaids, babysitters, security guards, pool cleaners).',
+        metadata: { type: 'jobs', category: 'categories', source: 'business_profile' }
+      },
+      {
+        id: 'why-choose-kozi',
+        content:
+          'Why Kozi: user-friendly and efficient; fast, smart hiring; cost-effective; reliable support.',
+        metadata: { type: 'company_info', category: 'value', source: 'business_profile' }
+      },
+      {
+        id: 'kozi-contact-info',
+        content:
+          'Contact: (+250) 788 719 678 · info@kozi.rw · Kigali–Kacyiru, KG 647 St · www.kozi.rw',
+        metadata: { type: 'contact_info', category: 'general', source: 'business_profile' }
+      },
+
+      // Worker guidelines-derived
+      {
+        id: 'industry-overview-domestic-services',
+        content:
+          'Kozi operates in domestic services (housekeeping, childcare, personal care). Urban demand is high; focus on fair employment and safety; tech platforms like Kozi enable growth.',
+        metadata: { type: 'guidance', category: 'industry', source: 'worker_guidelines' }
+      },
+      {
+        id: 'employment-and-payment-structure-guidelines',
+        content:
+          'Payments are handled by Kozi; workers receive salary from Kozi, not clients. Kozi may deduct ongoing management fees supporting placement, training, and support.',
+        metadata: { type: 'guidance', category: 'payments', source: 'worker_guidelines' }
+      },
+      {
+        id: 'professionalism-training-and-conduct',
+        content:
+          'Kozi offers regular training/workshops; expects punctuality, respect, proper use of resources (e.g., uniforms), and adherence to workplace rules to maintain professionalism.',
+        metadata: { type: 'guidance', category: 'conduct', source: 'worker_guidelines' }
+      },
+      {
+        id: 'worker-rights-and-safety',
+        content:
+          'Workers should report mistreatment/unsafe conditions to Kozi. Kozi prioritizes safety and compliance and supports workers to maintain a secure environment.',
+        metadata: { type: 'guidance', category: 'safety', source: 'worker_guidelines' }
+      },
+      {
+        id: 'benefits-of-joining-kozi',
+        content:
+          'Benefits groups: Employment (placement, income, flexibility, advancement); Development (training, professionalism, networking, feedback); Support & Safety (support, safety, management, community); Resources & Recognition (tools, transparency, client trust, recognition).',
+        metadata: { type: 'guidance', category: 'benefits', source: 'worker_guidelines' }
+      },
+      {
+        id: 'worker-guidelines-contacts',
+        content:
+          'Support: +250 788 719 678 · info@kozi.rw · www.kozi.rw · Office: Kacyiru–KG 647 St.',
+        metadata: { type: 'contact_info', category: 'support', source: 'worker_guidelines' }
+      }
+    ];
+
+    for (const item of koziKnowledgePack) {
       await this.ragService.addKnowledgeDocument(item.id, item.content, item.metadata);
     }
   }

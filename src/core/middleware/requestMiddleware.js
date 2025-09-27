@@ -7,7 +7,7 @@ const logger = require('../utils/logger');
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
     ? ['https://kozi.rw', 'https://www.kozi.rw']
-    : true, // Allow all origins in development
+    : true, // Allow all origins in development (includes Vue on port 5173)
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
@@ -17,10 +17,11 @@ const corsOptions = {
 const requestLogger = (req, res, next) => {
   const start = Date.now();
   
-  // Log request
+  // Log request (with origin for debugging)
   logger.info('Incoming request', {
     method: req.method,
     url: req.url,
+    origin: req.get('Origin') || 'no-origin',
     ip: req.ip,
     userAgent: req.get('User-Agent')
   });
@@ -44,14 +45,17 @@ const requestLogger = (req, res, next) => {
   next();
 };
 
-// Security headers
+// Security headers (relaxed for development)
 const securityMiddleware = helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       scriptSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "https:"]
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: process.env.NODE_ENV === 'production' 
+        ? ["'self'"] 
+        : ["'self'", "http://localhost:5173", "http://localhost:3000"] // Allow Vue and React dev servers
     }
   }
 });
