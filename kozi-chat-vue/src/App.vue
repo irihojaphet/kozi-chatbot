@@ -50,7 +50,10 @@
       <!-- Chat Messages Area -->
       <ChatArea 
         :messages="messages" 
-        @suggestion-click="sendSuggestion" 
+        :loading="loading"
+        :error="error"
+        @suggestion-click="sendSuggestion"
+        @retry="retryLastMessage"
       />
       
       <!-- Chat Input -->
@@ -72,12 +75,13 @@ import { useKoziChat } from './composables/useKoziChat'
 // Local component state for sidebar visibility
 const sidebarVisible = ref(true)
 
-// Use our chat composable (equivalent to React custom hook)
+// Use our chat composable
 const {
   // State
   messages,
   history,
   loading,
+  error,
   currentChatTitle,
   
   // Actions
@@ -87,7 +91,8 @@ const {
   toggleTheme,
   loadChatHistory,
   deleteHistoryItem,
-  clearAllHistory
+  clearAllHistory,
+  retryLastMessage
 } = useKoziChat()
 
 // Sidebar toggle functionality

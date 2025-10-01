@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { getOrCreateDemoUser, startSession, sendChatMessage, getChatHistory } from '../services/api'
 
 export function useKoziChat() {
-  // Reactive state (equivalent to React useState)
+  // Reactive state
   const currentUser = ref(null)
   const currentSession = ref(null)
   const messages = ref([])
@@ -12,6 +12,7 @@ export function useKoziChat() {
   const loading = ref(false)
   const error = ref(null)
   const currentChatTitle = ref('New Chat')
+  const lastFailedMessage = ref(null) // Store failed message for retry
 
   // Load history from localStorage on mount
   onMounted(() => {
@@ -26,7 +27,7 @@ export function useKoziChat() {
     initializeUser()
   })
 
-  // Watch history changes and save to localStorage (equivalent to React useEffect)
+  // Watch history changes and save to localStorage
   watch(history, (newHistory) => {
     if (newHistory.length > 0) {
       localStorage.setItem('kozi-chat-history', JSON.stringify(newHistory))
@@ -37,12 +38,13 @@ export function useKoziChat() {
   const initializeUser = async () => {
     try {
       loading.value = true
+      error.value = null
       const user = await getOrCreateDemoUser()
       currentUser.value = user
       console.log('User initialized:', user)
     } catch (e) {
       console.error('Failed to initialize user:', e)
-      error.value = 'Failed to initialize. Please refresh the page.'
+      error.value = 'Failed to connect to Kozi. Please refresh the page.'
       messages.value = [{ 
         sender: 'assistant', 
         text: 'Sorry, I had trouble connecting. Please refresh the page and try again.' 
@@ -83,7 +85,6 @@ export function useKoziChat() {
     const firstUserMessage = messages.value.find(m => m.sender === 'user')?.text
     const finalTitle = firstUserMessage ? generateChatTitle(firstUserMessage) : currentChatTitle.value
     
-    // Get last message and use it as is (clean for history display)
     const lastMessage = messages.value[messages.value.length - 1]
     let cleanLastMessage = ''
     
@@ -109,9 +110,8 @@ export function useKoziChat() {
       lastMessage: cleanLastMessage.substring(0, 100)
     }
 
-    // Remove any existing entry with same sessionId and add new entry at the beginning
     const filtered = history.value.filter(item => item.sessionId !== currentSession.value)
-    history.value = [chatEntry, ...filtered].slice(0, 50) // Keep only last 50 chats
+    history.value = [chatEntry, ...filtered].slice(0, 50)
   }
 
   // Start new chat
@@ -132,6 +132,7 @@ export function useKoziChat() {
     chatStarted.value = false
     error.value = null
     currentChatTitle.value = 'New Chat'
+    lastFailedMessage.value = null
     loading.value = true
 
     try {
@@ -150,8 +151,7 @@ export function useKoziChat() {
       }
     } catch (e) {
       console.error('Failed to start session:', e)
-      error.value = 'Failed to start chat session'
-      addBotMessage('Sorry, I had trouble starting our chat. Please try again.')
+      error.value = 'Failed to start chat session. Please try again.'
     } finally {
       loading.value = false
     }
@@ -164,6 +164,10 @@ export function useKoziChat() {
     }
 
     console.log('Sending message:', text)
+    
+    // Clear any previous errors
+    error.value = null
+    lastFailedMessage.value = null
 
     // Auto-start chat if needed
     if (!chatStarted.value || !currentSession.value) {
@@ -184,7 +188,7 @@ export function useKoziChat() {
         }
       } catch (e) {
         console.error('Auto-start failed:', e)
-        addBotMessage('Sorry, I had trouble starting our chat. Please try the "New Chat" button.')
+        error.value = 'Failed to start chat session. Please try the "New Chat" button.'
         loading.value = false
         return
       }
@@ -200,7 +204,6 @@ export function useKoziChat() {
     }
 
     loading.value = true
-    error.value = null
 
     try {
       const sessionId = currentSession.value || (await startSession(currentUser.value.user_id)).data?.session_id
@@ -214,10 +217,23 @@ export function useKoziChat() {
       }
     } catch (e) {
       console.error('Failed to send message:', e)
-      error.value = 'Failed to send message'
-      addBotMessage('Sorry, I had trouble processing your message. Please try again.')
+      error.value = 'Failed to send message. Please check your connection and try again.'
+      lastFailedMessage.value = text // Store for retry
+      
+      // Remove the user message that failed
+      messages.value = messages.value.filter(m => m.text !== text || m.sender !== 'user')
     } finally {
       loading.value = false
+    }
+  }
+
+  // Retry last failed message
+  const retryLastMessage = async () => {
+    if (lastFailedMessage.value) {
+      const messageToRetry = lastFailedMessage.value
+      lastFailedMessage.value = null
+      error.value = null
+      await sendMessage(messageToRetry)
     }
   }
 
@@ -236,6 +252,8 @@ export function useKoziChat() {
     }
     
     loading.value = true
+    error.value = null
+    
     try {
       const data = await getChatHistory(historyItem.sessionId)
       console.log('Loaded history:', data)
@@ -259,7 +277,7 @@ export function useKoziChat() {
       }
     } catch (e) {
       console.error('Failed to load history:', e)
-      addBotMessage('Failed to load chat history.')
+      error.value = 'Failed to load chat history. Please try again.'
     } finally {
       loading.value = false
     }
@@ -279,7 +297,19 @@ export function useKoziChat() {
   // Toggle theme
   const toggleTheme = () => {
     document.body.classList.toggle('dark')
+    
+    // Save theme preference
+    const isDark = document.body.classList.contains('dark')
+    localStorage.setItem('kozi-theme', isDark ? 'dark' : 'light')
   }
+
+  // Load theme preference on mount
+  onMounted(() => {
+    const savedTheme = localStorage.getItem('kozi-theme')
+    if (savedTheme === 'dark') {
+      document.body.classList.add('dark')
+    }
+  })
 
   // Auto-save current chat when component unmounts or page closes
   const handleBeforeUnload = () => {
@@ -294,10 +324,10 @@ export function useKoziChat() {
 
   onUnmounted(() => {
     window.removeEventListener('beforeunload', handleBeforeUnload)
-    handleBeforeUnload() // Save on unmount
+    handleBeforeUnload()
   })
 
-  // Return reactive state and actions (similar to React hook return)
+  // Return reactive state and actions
   return {
     // State
     currentUser: computed(() => currentUser.value),
@@ -316,7 +346,8 @@ export function useKoziChat() {
     loadChatHistory,
     deleteHistoryItem,
     clearAllHistory,
-    toggleTheme
+    toggleTheme,
+    retryLastMessage
   }
 }
 
@@ -324,17 +355,12 @@ export function useKoziChat() {
 function stripHtmlAndFormat(text = '') {
   if (!text) return ''
   
-  // Remove HTML tags
   let cleaned = text.replace(/<[^>]*>/g, '')
-  
-  // Remove markdown formatting
-  cleaned = cleaned.replace(/\*\*(.+?)\*\*/g, '$1') // Bold
-  cleaned = cleaned.replace(/\*(.+?)\*/g, '$1') // Italic
-  cleaned = cleaned.replace(/#{1,6}\s*(.+)/g, '$1') // Headers
-  cleaned = cleaned.replace(/^\d+\.\s*/gm, '') // Numbered lists
-  cleaned = cleaned.replace(/^[-•]\s*/gm, '') // Bullet points
-  
-  // Clean up extra whitespace
+  cleaned = cleaned.replace(/\*\*(.+?)\*\*/g, '$1')
+  cleaned = cleaned.replace(/\*(.+?)\*/g, '$1')
+  cleaned = cleaned.replace(/#{1,6}\s*(.+)/g, '$1')
+  cleaned = cleaned.replace(/^\d+\.\s*/gm, '')
+  cleaned = cleaned.replace(/^[-•]\s*/gm, '')
   cleaned = cleaned.replace(/\s+/g, ' ').trim()
   
   return cleaned
@@ -345,26 +371,14 @@ function formatMessage(message = '') {
   
   let formatted = String(message)
   
-  // Remove unwanted markdown characters at the start of lines
   formatted = formatted.replace(/^[#*><]+\s*/gm, '')
-  
-  // Handle numbered lists
   formatted = formatted.replace(/^(\d+)\.\s+(.+)$/gm, '<div class="numbered-item"><span class="number">$1.</span>$2</div>')
-  
-  // Handle bullet points
   formatted = formatted.replace(/^\s*[-•]\s+(.+)$/gm, '<div class="bullet-item">$1</div>')
-  
-  // Handle bold text
   formatted = formatted.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-  
-  // Handle section headers
   formatted = formatted.replace(/^(.+):$/gm, '<div class="section-header">$1</div>')
-  
-  // Convert line breaks
   formatted = formatted.replace(/\n\n/g, '</p><p>')
   formatted = formatted.replace(/\n/g, '<br>')
   
-  // Wrap in paragraph tags if not already wrapped
   if (!formatted.includes('<div') && !formatted.includes('<p>')) {
     formatted = `<p>${formatted}</p>`
   }

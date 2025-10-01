@@ -1,7 +1,7 @@
 <template>
   <div class="chat-messages">
-    <!-- Welcome Screen (when no messages) -->
-    <div v-if="messages.length === 0" class="welcome-screen">
+    <!-- Welcome Screen (always show when no user messages) -->
+    <div v-if="!hasUserMessages" class="welcome-screen">
       <div class="welcome-content">
         <h1>Good to see you! What would you like to explore today?</h1>
         <p>I'm here to help you with everything related to Kozi platform</p>
@@ -21,40 +21,83 @@
     </div>
 
     <!-- Chat Messages -->
-    <div
-      v-else
-      v-for="(message, index) in messages"
-      :key="index"
-      :class="`message ${message.sender === 'user' ? 'user-message' : 'bot-message'}`"
-    >
-      <div class="message-content">
-        <!-- User messages: plain text -->
-        <div v-if="message.sender === 'user'">
-          {{ message.text }}
+    <template v-else>
+      <div
+        v-for="(message, index) in messages"
+        :key="index"
+        :class="`message ${message.sender === 'user' ? 'user-message' : 'bot-message'}`"
+      >
+        <div class="message-content">
+          <!-- User messages: plain text -->
+          <div v-if="message.sender === 'user'">
+            {{ message.text }}
+          </div>
+          
+          <!-- Bot messages: formatted HTML -->
+          <div
+            v-else
+            class="formatted-content"
+            v-html="message.text"
+          ></div>
         </div>
-        
-        <!-- Bot messages: formatted HTML -->
-        <div
-          v-else
-          class="formatted-content"
-          v-html="message.text"
-        ></div>
       </div>
-    </div>
+
+      <!-- Loading State -->
+      <div v-if="loading" class="message bot-message">
+        <div class="loading-message">
+          <div class="loading-dots">
+            <span class="loading-dot"></span>
+            <span class="loading-dot"></span>
+            <span class="loading-dot"></span>
+          </div>
+          <span class="loading-text">Kozi Agent is thinking...</span>
+        </div>
+      </div>
+
+      <!-- Error State -->
+      <div v-if="error" class="message bot-message">
+        <div class="error-message">
+          <div class="error-header">
+            <i class="fas fa-exclamation-triangle error-icon"></i>
+            <span>Oops! Something went wrong</span>
+          </div>
+          <p class="error-text">{{ error }}</p>
+          <button class="retry-btn" @click="handleRetry">
+            <i class="fas fa-redo"></i>
+            Try Again
+          </button>
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
 <script setup>
-// Define props (equivalent to React props)
-defineProps({
+import { computed } from 'vue'
+
+// Define props
+const props = defineProps({
   messages: {
     type: Array,
     default: () => []
+  },
+  loading: {
+    type: Boolean,
+    default: false
+  },
+  error: {
+    type: String,
+    default: null
   }
 })
 
-// Define events that this component can emit
-const emit = defineEmits(['suggestion-click'])
+// Define events
+const emit = defineEmits(['suggestion-click', 'retry'])
+
+// Check if there are any user messages
+const hasUserMessages = computed(() => {
+  return props.messages.some(msg => msg.sender === 'user')
+})
 
 // Suggestion cards data
 const suggestionCards = [
@@ -80,13 +123,17 @@ const suggestionCards = [
   }
 ]
 
-// Handle suggestion click (emit event to parent)
+// Handle suggestion click
 const handleSuggestionClick = (message) => {
   emit('suggestion-click', message)
+}
+
+// Handle retry
+const handleRetry = () => {
+  emit('retry')
 }
 </script>
 
 <style scoped>
-/* Component-specific styles can go here if needed */
-/* Most styles will come from the global dashboard.css */
+/* Component-specific styles are in dashboard.css */
 </style>
