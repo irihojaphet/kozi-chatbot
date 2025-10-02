@@ -2,15 +2,15 @@ const express = require('express');
 const chatRoutes = require('./chat');
 const profileRoutes = require('./profile');
 const healthRoutes = require('./health');
+const jobsRoutes = require('./jobs'); // NEW
 
 const router = express.Router();
 
-// Mount route modules
 router.use('/chat', chatRoutes);
 router.use('/profile', profileRoutes);
 router.use('/health', healthRoutes);
+router.use('/jobs', jobsRoutes); // NEW
 
-// Root API endpoint
 router.get('/', (req, res) => {
   res.json({
     message: 'Kozi Chatbot API',
@@ -18,7 +18,8 @@ router.get('/', (req, res) => {
     endpoints: {
       chat: '/api/chat',
       profile: '/api/profile',
-      health: '/api/health'
+      health: '/api/health',
+      jobs: '/api/jobs' // NEW
     }
   });
 });

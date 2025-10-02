@@ -85,3 +85,28 @@ export async function getChatHistory(session_id) {
     throw error;
   }
 }
+
+// ... existing code ...
+
+export async function getJobs(filters = {}) {
+  const params = new URLSearchParams(filters);
+  const r = await fetch(`${DEMO_CONFIG.baseURL}/jobs?${params}`);
+  if (!r.ok) throw new Error(`Failed to get jobs: ${r.status}`);
+  return r.json();
+}
+
+export async function getRecommendedJobs(userId) {
+  const r = await fetch(`${DEMO_CONFIG.baseURL}/jobs/recommended/${userId}`);
+  if (!r.ok) throw new Error(`Failed to get recommended jobs: ${r.status}`);
+  return r.json();
+}
+
+export async function applyToJob(jobId, userId, data = {}) {
+  const r = await fetch(`${DEMO_CONFIG.baseURL}/jobs/${jobId}/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId, ...data })
+  });
+  if (!r.ok) throw new Error(`Failed to apply: ${r.status}`);
+  return r.json();
+}

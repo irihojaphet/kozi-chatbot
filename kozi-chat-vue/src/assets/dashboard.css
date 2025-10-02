@@ -1220,3 +1220,132 @@ body.dark .chat-history::-webkit-scrollbar-thumb:hover {
   background: var(--gray-300);
   border-radius: var(--radius-full);
 }
+
+/* ===== KOZI MESSAGE FORMATTING FIX ===== */
+/* Add these styles to your dashboard.css file */
+
+/* Ensure section headers stay on one line and don't break awkwardly */
+.message-content .section-header {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--gray-900);
+  margin: var(--space-4) 0 var(--space-2) 0;
+  padding-bottom: var(--space-1);
+  border-bottom: 2px solid var(--primary-100);
+  position: relative;
+  
+  /* CRITICAL: Prevent awkward line breaks */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+  width: 100%;
+}
+
+/* For very long headers that need to wrap, do it gracefully */
+.message-content .section-header.allow-wrap {
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+
+/* Fix for bold text inside messages - prevent weird breaks */
+.message-content strong {
+  font-weight: 700;
+  color: var(--gray-900);
+  display: inline;
+  white-space: normal;
+  word-wrap: break-word;
+}
+
+/* Ensure the formatted content container allows proper wrapping */
+.formatted-content {
+  line-height: 1.7;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+/* Fix numbered items - keep number and text together better */
+.message-content .numbered-item {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-1);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.message-content .numbered-item .number {
+  color: var(--primary-600);
+  font-weight: 700;
+  min-width: 24px;
+  flex-shrink: 0;
+  white-space: nowrap; /* Number should never break */
+}
+
+.message-content .numbered-item .text {
+  flex: 1;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Fix bullet items */
+.message-content .bullet-item {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-3);
+  position: relative;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Ensure paragraphs inside formatted content wrap properly */
+.formatted-content p {
+  margin: var(--space-2) 0;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+/* Dark theme adjustments */
+body.dark .message-content .section-header {
+  color: #ffffff;
+  border-bottom-color: #2a2a2a;
+}
+
+body.dark .message-content strong {
+  color: #ffffff;
+}
+
+/* Responsive improvements for mobile */
+@media (max-width: 768px) {
+  .message-content .section-header {
+    font-size: var(--font-size-base);
+    /* Allow wrapping on very small screens */
+    white-space: normal;
+  }
+}
+
+/* ===== ENHANCED FORMATTING RULES ===== */
+
+/* Make sure line breaks are handled properly */
+.formatted-content br {
+  display: block;
+  content: "";
+  margin-top: 0.5em;
+}
+
+/* Prevent orphaned words at line breaks */
+.message-content {
+  text-wrap: pretty; /* Modern CSS feature for better text wrapping */
+  hanging-punctuation: first last;
+}
+
+/* Safari/older browser fallback */
+@supports not (text-wrap: pretty) {
+  .message-content {
+    word-spacing: 0.05em;
+  }
+}

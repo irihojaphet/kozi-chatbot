@@ -45,18 +45,42 @@ export function useKoziChat() {
     } catch (e) {
       console.error('Failed to initialize user:', e)
       error.value = 'Failed to connect to Kozi. Please refresh the page.'
-      messages.value = [{ 
-        sender: 'assistant', 
-        text: 'Sorry, I had trouble connecting. Please refresh the page and try again.' 
+      messages.value = [{
+        sender: 'assistant',
+        text: 'Sorry, I had trouble connecting. Please refresh the page and try again.'
       }]
     } finally {
       loading.value = false
     }
   }
 
-  // Helper functions
-  const addBotMessage = (text) => {
-    messages.value.push({ sender: 'assistant', text: formatMessage(text) })
+  // Helper: push bot message with support for jobs payload
+  const addBotMessage = (payload) => {
+    // Allow either plain string or already-formatted object
+    if (typeof payload === 'string') {
+      messages.value.push({ sender: 'assistant', text: formatMessage(payload) })
+      return
+    }
+
+    // If it's an object, we expect { text, jobs? }
+    if (payload && typeof payload === 'object') {
+      // Ensure text is formatted for HTML rendering
+      const text = typeof payload.text === 'string'
+        ? formatMessage(payload.text)
+        : formatMessage('')
+      const msg = { sender: 'assistant', text }
+
+      // Preserve jobs array if present
+      if (Array.isArray(payload.jobs) && payload.jobs.length) {
+        msg.jobs = payload.jobs
+      }
+
+      messages.value.push(msg)
+      return
+    }
+
+    // Fallback
+    messages.value.push({ sender: 'assistant', text: formatMessage('') })
   }
 
   const addUserMessage = (text) => {
@@ -66,15 +90,12 @@ export function useKoziChat() {
   // Generate smart title from first user message
   const generateChatTitle = (firstMessage) => {
     if (!firstMessage) return 'New Chat'
-    
     let title = firstMessage.trim()
     title = title.replace(/^(how|what|when|where|why|can|could|would|should|tell me|help me)\s+/i, '')
     title = title.charAt(0).toUpperCase() + title.slice(1)
-    
     if (title.length > 50) {
       title = title.substring(0, 47) + '...'
     }
-    
     return title || 'New Chat'
   }
 
@@ -84,10 +105,10 @@ export function useKoziChat() {
 
     const firstUserMessage = messages.value.find(m => m.sender === 'user')?.text
     const finalTitle = firstUserMessage ? generateChatTitle(firstUserMessage) : currentChatTitle.value
-    
+
     const lastMessage = messages.value[messages.value.length - 1]
     let cleanLastMessage = ''
-    
+
     if (lastMessage) {
       if (lastMessage.sender === 'user') {
         cleanLastMessage = lastMessage.text
@@ -95,12 +116,12 @@ export function useKoziChat() {
         cleanLastMessage = stripHtmlAndFormat(lastMessage.text)
       }
     }
-    
+
     const chatEntry = {
       sessionId: currentSession.value,
       title: finalTitle,
-      date: new Date().toLocaleDateString('en-US', { 
-        month: 'short', 
+      date: new Date().toLocaleDateString('en-US', {
+        month: 'short',
         day: 'numeric',
         hour: '2-digit',
         minute: '2-digit'
@@ -138,12 +159,13 @@ export function useKoziChat() {
     try {
       const data = await startSession(currentUser.value.user_id)
       console.log('Session started:', data)
-      
+
       if (data?.success && data?.data) {
         currentSession.value = data.data.session_id
         chatStarted.value = true
-        
+
         if (data.data.message) {
+          // First welcome message (no jobs expected here usually)
           addBotMessage(data.data.message)
         }
       } else {
@@ -164,7 +186,7 @@ export function useKoziChat() {
     }
 
     console.log('Sending message:', text)
-    
+
     // Clear any previous errors
     error.value = null
     lastFailedMessage.value = null
@@ -175,11 +197,11 @@ export function useKoziChat() {
       try {
         loading.value = true
         const data = await startSession(currentUser.value.user_id)
-        
+
         if (data?.success && data?.data) {
           currentSession.value = data.data.session_id
           chatStarted.value = true
-          
+
           if (data.data.message) {
             addBotMessage(data.data.message)
           }
@@ -196,7 +218,7 @@ export function useKoziChat() {
 
     // Add user message to UI immediately
     addUserMessage(text)
-    
+
     // Update chat title if this is the first message
     if (messages.value.length === 1 || (messages.value.length === 2 && messages.value[0].sender === 'assistant')) {
       const newTitle = generateChatTitle(text)
@@ -209,9 +231,13 @@ export function useKoziChat() {
       const sessionId = currentSession.value || (await startSession(currentUser.value.user_id)).data?.session_id
       const resp = await sendChatMessage(sessionId, currentUser.value.user_id, text)
       console.log('Message response:', resp)
-      
+
       if (resp?.success && resp?.data) {
-        addBotMessage(resp.data.message || 'I received your message.')
+        // === IMPORTANT ===
+        // Use the full payload so job cards render when backend responds with:
+        // { message, intent: 'jobs', context: { last_jobs: [...] } }
+        const formatted = formatMessage(resp.data.message || 'I received your message.', resp.data)
+        addBotMessage(formatted)
       } else {
         throw new Error('Invalid message response')
       }
@@ -219,7 +245,7 @@ export function useKoziChat() {
       console.error('Failed to send message:', e)
       error.value = 'Failed to send message. Please check your connection and try again.'
       lastFailedMessage.value = text // Store for retry
-      
+
       // Remove the user message that failed
       messages.value = messages.value.filter(m => m.text !== text || m.sender !== 'user')
     } finally {
@@ -245,24 +271,32 @@ export function useKoziChat() {
   // Load chat history
   const loadChatHistory = async (historyItem) => {
     if (!historyItem.sessionId) return
-    
+
     // Save current chat before loading new one
     if (currentSession.value && messages.value.length > 0) {
       saveCurrentChatToHistory()
     }
-    
+
     loading.value = true
     error.value = null
-    
+
     try {
       const data = await getChatHistory(historyItem.sessionId)
       console.log('Loaded history:', data)
-      
+
       if (data?.success && data?.data?.messages) {
-        const msgs = data.data.messages.map(m => ({
-          sender: m.sender === 'user' ? 'user' : 'assistant',
-          text: formatMessage(m.message || m.text || '')
-        }))
+        const msgs = data.data.messages.map(m => {
+          // If your history endpoint also returns intent/context for each bot message,
+          // pass them into formatMessage to restore job cards from history as well.
+          if (m.sender === 'user') {
+            return { sender: 'user', text: m.message || m.text || '' }
+          } else {
+            const fmtd = formatMessage(m.message || m.text || '', m)
+            return (typeof fmtd === 'string')
+              ? { sender: 'assistant', text: fmtd }
+              : { sender: 'assistant', text: fmtd.text, jobs: fmtd.jobs }
+          }
+        })
         messages.value = msgs
         currentSession.value = historyItem.sessionId
         currentChatTitle.value = historyItem.title
@@ -297,8 +331,6 @@ export function useKoziChat() {
   // Toggle theme
   const toggleTheme = () => {
     document.body.classList.toggle('dark')
-    
-    // Save theme preference
     const isDark = document.body.classList.contains('dark')
     localStorage.setItem('kozi-theme', isDark ? 'dark' : 'light')
   }
@@ -338,7 +370,7 @@ export function useKoziChat() {
     loading: computed(() => loading.value),
     error: computed(() => error.value),
     currentChatTitle: computed(() => currentChatTitle.value),
-    
+
     // Actions
     startNewChat,
     sendMessage,
@@ -351,10 +383,11 @@ export function useKoziChat() {
   }
 }
 
-// Utility functions
+/* ---------------------------------- */
+/* Utility + Formatting               */
+/* ---------------------------------- */
 function stripHtmlAndFormat(text = '') {
   if (!text) return ''
-  
   let cleaned = text.replace(/<[^>]*>/g, '')
   cleaned = cleaned.replace(/\*\*(.+?)\*\*/g, '$1')
   cleaned = cleaned.replace(/\*(.+?)\*/g, '$1')
@@ -362,26 +395,88 @@ function stripHtmlAndFormat(text = '') {
   cleaned = cleaned.replace(/^\d+\.\s*/gm, '')
   cleaned = cleaned.replace(/^[-•]\s*/gm, '')
   cleaned = cleaned.replace(/\s+/g, ' ').trim()
-  
   return cleaned
 }
 
-function formatMessage(message = '') {
+/**
+ * Job-aware formatter.
+ * - If rawData.intent === 'jobs', returns { text, jobs } so ChatArea can render <JobCard />
+ * - Otherwise returns formatted HTML string.
+ */
+function formatMessage(message = '', rawData = null) {
   if (!message) return ''
-  
+
+  // === Jobs intent handling ===
+  if (rawData && rawData.intent === 'jobs') {
+    const jobsContext = rawData.context?.last_jobs || []
+    return {
+      text: formatMessageText(message),
+      jobs: Array.isArray(jobsContext) ? jobsContext : [],
+      type: 'jobs'
+    }
+  }
+
+  // Regular text
+  return formatMessageText(message)
+}
+
+function formatMessageText(message) {
   let formatted = String(message)
-  
+
+  // Remove markdown artifacts from start of lines
   formatted = formatted.replace(/^[#*><]+\s*/gm, '')
-  formatted = formatted.replace(/^(\d+)\.\s+(.+)$/gm, '<div class="numbered-item"><span class="number">$1.</span>$2</div>')
+
+  // Section headers (lines ending with colon)
+  formatted = formatted.replace(/^([^:\n]+):$/gm, '<div class="section-header">$1</div>')
+
+  // Numbered lists
+  formatted = formatted.replace(
+    /^(\d+)\.\s+(.+)$/gm,
+    '<div class="numbered-item"><span class="number">$1.</span><span class="text">$2</span></div>'
+  )
+
+  // Bullets
   formatted = formatted.replace(/^\s*[-•]\s+(.+)$/gm, '<div class="bullet-item">$1</div>')
+
+  // Bold (**text** or __text__)
   formatted = formatted.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-  formatted = formatted.replace(/^(.+):$/gm, '<div class="section-header">$1</div>')
+  formatted = formatted.replace(/__(.+?)__/g, '<strong>$1</strong>')
+
+  // Italic (*text* or _text_) (avoid bold)
+  formatted = formatted.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>')
+  formatted = formatted.replace(/(?<!_)_([^_]+?)_(?!_)/g, '<em>$1</em>')
+
+  // Paragraphs
   formatted = formatted.replace(/\n\n/g, '</p><p>')
   formatted = formatted.replace(/\n/g, '<br>')
-  
+
   if (!formatted.includes('<div') && !formatted.includes('<p>')) {
     formatted = `<p>${formatted}</p>`
   }
-  
+
+  // Remove empty paragraphs
+  formatted = formatted.replace(/<p>\s*<\/p>/g, '')
   return formatted
 }
+
+// Alternative helper if headers are very long
+function formatMessageWithLongHeaders(message = '', rawData = null) {
+  const formatted = formatMessage(message, rawData)
+  if (typeof formatted === 'string') {
+    return formatted.replace(
+      /<div class="section-header">([^<]{50,})<\/div>/g,
+      '<div class="section-header allow-wrap">$1</div>'
+    )
+  }
+  // If it's a jobs payload, just wrap the text part
+  return {
+    ...formatted,
+    text: formatted.text.replace(
+      /<div class="section-header">([^<]{50,})<\/div>/g,
+      '<div class="section-header allow-wrap">$1</div>'
+    )
+  }
+}
+
+// Export helpers if needed elsewhere
+export { formatMessage, formatMessageWithLongHeaders }

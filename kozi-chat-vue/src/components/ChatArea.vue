@@ -32,13 +32,24 @@
           <div v-if="message.sender === 'user'">
             {{ message.text }}
           </div>
-          
-          <!-- Bot messages: formatted HTML -->
-          <div
-            v-else
-            class="formatted-content"
-            v-html="message.text"
-          ></div>
+
+          <!-- Bot messages -->
+          <div v-else>
+            <!-- If the bot provided jobs, render job cards -->
+            <JobCard
+              v-if="message.jobs && message.jobs.length > 0"
+              :jobs="message.jobs"
+              @apply-job="handleApplyJob"
+              @view-job="handleViewJob"
+            />
+
+            <!-- Otherwise, render formatted HTML content -->
+            <div
+              v-else
+              class="formatted-content"
+              v-html="message.text"
+            ></div>
+          </div>
         </div>
       </div>
 
@@ -74,8 +85,9 @@
 
 <script setup>
 import { computed } from 'vue'
+import JobCard from './JobCard.vue' // NEW
 
-// Define props
+// Props
 const props = defineProps({
   messages: {
     type: Array,
@@ -91,49 +103,64 @@ const props = defineProps({
   }
 })
 
-// Define events
+// Emits
 const emit = defineEmits(['suggestion-click', 'retry'])
 
-// Check if there are any user messages
-const hasUserMessages = computed(() => {
-  return props.messages.some(msg => msg.sender === 'user')
-})
+// Has any user typed yet?
+const hasUserMessages = computed(() =>
+  props.messages.some(msg => msg.sender === 'user')
+)
 
-// Suggestion cards data
+// Suggestion cards shown on welcome screen
 const suggestionCards = [
-  { 
-    icon: "fas fa-user", 
-    text: "Complete Profile", 
-    msg: "How do I complete my profile?" 
+  {
+    icon: 'fas fa-user',
+    text: 'Complete Profile',
+    msg: 'How do I complete my profile?'
   },
-  { 
-    icon: "fas fa-file-alt", 
-    text: "CV Writing Help", 
-    msg: "Help me write a professional CV" 
+  {
+    icon: 'fas fa-file-alt',
+    text: 'CV Writing Help',
+    msg: 'Help me write a professional CV'
   },
-  { 
-    icon: "fas fa-briefcase", 
-    text: "Find Jobs", 
-    msg: "How can I find and apply for jobs?" 
+  {
+    icon: 'fas fa-briefcase',
+    text: 'Find Jobs',
+    msg: 'Show me available jobs'
   },
-  { 
-    icon: "fas fa-upload", 
-    text: "Upload Documents", 
-    msg: "What documents do I need to upload?" 
+  {
+    icon: 'fas fa-upload',
+    text: 'Upload Documents',
+    msg: 'What documents do I need to upload?'
   }
 ]
 
-// Handle suggestion click
+// Welcome suggestion clicked
 const handleSuggestionClick = (message) => {
   emit('suggestion-click', message)
 }
 
-// Handle retry
+// Retry button clicked in error state
 const handleRetry = () => {
   emit('retry')
+}
+
+// NEW: Job card actions route back through the same suggestion pipeline
+const handleApplyJob = (job) => {
+  // This keeps your chat flow logic consistent with typed text
+  emit('suggestion-click', `Apply to job #${job.id}`)
+}
+
+const handleViewJob = (job) => {
+  emit('suggestion-click', `Show me details for job #${job.id}`)
 }
 </script>
 
 <style scoped>
 /* Component-specific styles are in dashboard.css */
+/* Ensure your global CSS includes styling for:
+   .chat-messages, .message, .user-message, .bot-message,
+   .formatted-content, .welcome-screen, .suggestion-cards, .suggestion-card,
+   .loading-message, .loading-dots, .loading-dot, .error-message, etc.
+*/
 </style>

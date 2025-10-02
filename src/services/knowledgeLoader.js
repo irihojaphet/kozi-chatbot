@@ -6,10 +6,13 @@ const logger = require('../core/utils/logger');
 class KnowledgeLoader {
   constructor() {
     this.ragService = new RAGService();
+    this._initialized = false;
   }
 
   async initialize() {
+    if (this._initialized) return;
     await this.ragService.initialize();
+    this._initialized = true;
   }
 
   async loadKoziKnowledge() {
@@ -39,6 +42,9 @@ class KnowledgeLoader {
 
       // NEW: Atomic knowledge pack (concise Q/A facts from PDFs)
       await this.loadKoziKnowledgePack();
+
+      // NEW: Lightweight job/cv guidance for chat UX (jobs intent discoverability)
+      await this.loadJobKnowledge();
 
       // NEW: Index local PDFs placed under data/docs
       await this.loadLocalDocuments();
@@ -202,7 +208,7 @@ FEES & PAYMENTS (HOUSE CLEANER AGREEMENT – KOZI RWANDA)
     );
   }
 
-  // NEW: Atomic knowledge snippets from PDFs
+  // NEW: Atomic knowledge snippets from PDFs / profiles / guidelines
   async loadKoziKnowledgePack() {
     const koziKnowledgePack = [
       // Agreement-derived
@@ -361,6 +367,31 @@ FEES & PAYMENTS (HOUSE CLEANER AGREEMENT – KOZI RWANDA)
     }
   }
 
+  // NEW: lightweight guidance specifically to make jobs & CV actions discoverable in chat
+  async loadJobKnowledge() {
+    const jobKnowledge = [
+      {
+        id: 'jobs-available',
+        content: `To see available jobs, ask "Show me available jobs" or "What jobs are hiring?". I can show you jobs matching your profile and location.`,
+        metadata: { type: 'guidance', category: 'jobs' }
+      },
+      {
+        id: 'cv-generation',
+        content: `I can help you create a professional CV step-by-step. Just say "Create my CV" or "Help me write my CV" and I'll guide you through the process.`,
+        metadata: { type: 'guidance', category: 'cv' }
+      },
+      {
+        id: 'apply-jobs',
+        content: `To apply for jobs, first complete your profile to at least 60%. Then search for jobs and say "Apply to job #1" to apply to the job you're interested in.`,
+        metadata: { type: 'guidance', category: 'application' }
+      }
+    ];
+
+    for (const item of jobKnowledge) {
+      await this.ragService.addKnowledgeDocument(item.id, item.content, item.metadata);
+    }
+  }
+
   // NEW: scan data/docs and index PDFs
   async loadLocalDocuments() {
     const docsDir = path.join(process.cwd(), 'data', 'docs');
@@ -369,7 +400,11 @@ FEES & PAYMENTS (HOUSE CLEANER AGREEMENT – KOZI RWANDA)
       return;
     }
 
-    const files = fs.readdirSync(docsDir).filter(f => f.toLowerCase().endsWith('.pdf'));
+    const files = fs
+      .readdirSync(docsDir, { withFileTypes: true })
+      .filter((d) => d.isFile() && d.name.toLowerCase().endsWith('.pdf'))
+      .map((d) => d.name);
+
     if (!files.length) {
       logger.info('knowledge-loader: no PDFs found in docs folder', { docsDir });
       return;
@@ -384,6 +419,7 @@ FEES & PAYMENTS (HOUSE CLEANER AGREEMENT – KOZI RWANDA)
         });
         logger.info('Knowledge document added', { id: filename, type: 'pdf' });
       } catch (e) {
+        // Continue indexing remaining files even if one fails
         logger.error('Failed to index PDF', { file: filename, error: e.message });
       }
     }
