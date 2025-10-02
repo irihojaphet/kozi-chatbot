@@ -55,129 +55,126 @@ export function useKoziChat() {
   }
 
   // Helper: push bot message with support for jobs payload
-  const addBotMessage = (payload) => {
-    // Allow either plain string or already-formatted object
-    if (typeof payload === 'string') {
-      messages.value.push({ sender: 'assistant', text: formatMessage(payload) })
-      return
+  // Replace your addBotMessage with this version
+const addBotMessage = (payload) => {
+  // Case 1: plain string from server → format to HTML
+  if (typeof payload === 'string') {
+    messages.value.push({ sender: 'bot', text: formatMessage(payload) })
+    return
+  }
+
+  // Case 2: object (possibly from formatMessage(message, rawData))
+  if (payload && typeof payload === 'object') {
+    // If it already looks preformatted (has jobs OR contains HTML tags), don't re-format
+    const looksPreformatted =
+      Array.isArray(payload.jobs) ||
+      (typeof payload.text === 'string' && /<\/?[a-z][\s\S]*>/i.test(payload.text))
+
+    const text = typeof payload.text === 'string'
+      ? (looksPreformatted ? payload.text : formatMessage(payload.text))
+      : formatMessage('')
+
+    const msg = { sender: 'bot', text }
+
+    // Preserve jobs array if present
+    if (Array.isArray(payload.jobs) && payload.jobs.length) {
+      msg.jobs = payload.jobs
     }
 
-    // If it's an object, we expect { text, jobs? }
-    if (payload && typeof payload === 'object') {
-      // Ensure text is formatted for HTML rendering
-      const text = typeof payload.text === 'string'
-        ? formatMessage(payload.text)
-        : formatMessage('')
-      const msg = { sender: 'assistant', text }
+    messages.value.push(msg)
+    return
+  }
 
-      // Preserve jobs array if present
-      if (Array.isArray(payload.jobs) && payload.jobs.length) {
-        msg.jobs = payload.jobs
+  // Fallback
+  messages.value.push({ sender: 'bot', text: formatMessage('') })
+}
+
+// (unchanged)
+const addUserMessage = (text) => {
+  messages.value.push({ sender: 'user', text })
+}
+
+// (unchanged)
+const generateChatTitle = (firstMessage) => {
+  if (!firstMessage) return 'New Chat'
+  let title = firstMessage.trim()
+  title = title.replace(/^(how|what|when|where|why|can|could|would|should|tell me|help me)\s+/i, '')
+  title = title.charAt(0).toUpperCase() + title.slice(1)
+  if (title.length > 50) title = title.substring(0, 47) + '...'
+  return title || 'New Chat'
+}
+
+// (unchanged logic; works with 'bot')
+const saveCurrentChatToHistory = () => {
+  if (!currentSession.value || messages.value.length === 0) return
+  const firstUserMessage = messages.value.find(m => m.sender === 'user')?.text
+  const finalTitle = firstUserMessage ? generateChatTitle(firstUserMessage) : currentChatTitle.value
+
+  const lastMessage = messages.value[messages.value.length - 1]
+  let cleanLastMessage = ''
+  if (lastMessage) {
+    cleanLastMessage = lastMessage.sender === 'user'
+      ? lastMessage.text
+      : stripHtmlAndFormat(lastMessage.text)
+  }
+
+  const chatEntry = {
+    sessionId: currentSession.value,
+    title: finalTitle,
+    date: new Date().toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+    }),
+    timestamp: Date.now(),
+    messageCount: messages.value.length,
+    lastMessage: cleanLastMessage.substring(0, 100)
+  }
+
+  const filtered = history.value.filter(item => item.sessionId !== currentSession.value)
+  history.value = [chatEntry, ...filtered].slice(0, 50)
+}
+
+// (no functional change; shown for context)
+const startNewChat = async () => {
+  if (!currentUser.value) {
+    console.warn('No user available for new chat')
+    return
+  }
+
+  if (currentSession.value && messages.value.length > 0) {
+    saveCurrentChatToHistory()
+  }
+
+  messages.value = []
+  currentSession.value = null
+  chatStarted.value = false
+  error.value = null
+  currentChatTitle.value = 'New Chat'
+  lastFailedMessage.value = null
+  loading.value = true
+
+  try {
+    const data = await startSession(currentUser.value.user_id)
+    console.log('Session started:', data)
+
+    if (data?.success && data?.data) {
+      currentSession.value = data.data.session_id
+      chatStarted.value = true
+
+      if (data.data.message) {
+        // welcome message (plain string) → handled by addBotMessage
+        addBotMessage(data.data.message)
       }
-
-      messages.value.push(msg)
-      return
+    } else {
+      throw new Error('Invalid session response')
     }
-
-    // Fallback
-    messages.value.push({ sender: 'assistant', text: formatMessage('') })
+  } catch (e) {
+    console.error('Failed to start session:', e)
+    error.value = 'Failed to start chat session. Please try again.'
+  } finally {
+    loading.value = false
   }
+}
 
-  const addUserMessage = (text) => {
-    messages.value.push({ sender: 'user', text })
-  }
-
-  // Generate smart title from first user message
-  const generateChatTitle = (firstMessage) => {
-    if (!firstMessage) return 'New Chat'
-    let title = firstMessage.trim()
-    title = title.replace(/^(how|what|when|where|why|can|could|would|should|tell me|help me)\s+/i, '')
-    title = title.charAt(0).toUpperCase() + title.slice(1)
-    if (title.length > 50) {
-      title = title.substring(0, 47) + '...'
-    }
-    return title || 'New Chat'
-  }
-
-  // Save current chat to history
-  const saveCurrentChatToHistory = () => {
-    if (!currentSession.value || messages.value.length === 0) return
-
-    const firstUserMessage = messages.value.find(m => m.sender === 'user')?.text
-    const finalTitle = firstUserMessage ? generateChatTitle(firstUserMessage) : currentChatTitle.value
-
-    const lastMessage = messages.value[messages.value.length - 1]
-    let cleanLastMessage = ''
-
-    if (lastMessage) {
-      if (lastMessage.sender === 'user') {
-        cleanLastMessage = lastMessage.text
-      } else {
-        cleanLastMessage = stripHtmlAndFormat(lastMessage.text)
-      }
-    }
-
-    const chatEntry = {
-      sessionId: currentSession.value,
-      title: finalTitle,
-      date: new Date().toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      }),
-      timestamp: Date.now(),
-      messageCount: messages.value.length,
-      lastMessage: cleanLastMessage.substring(0, 100)
-    }
-
-    const filtered = history.value.filter(item => item.sessionId !== currentSession.value)
-    history.value = [chatEntry, ...filtered].slice(0, 50)
-  }
-
-  // Start new chat
-  const startNewChat = async () => {
-    if (!currentUser.value) {
-      console.warn('No user available for new chat')
-      return
-    }
-
-    // Save current chat to history before starting new one
-    if (currentSession.value && messages.value.length > 0) {
-      saveCurrentChatToHistory()
-    }
-
-    // Reset chat state
-    messages.value = []
-    currentSession.value = null
-    chatStarted.value = false
-    error.value = null
-    currentChatTitle.value = 'New Chat'
-    lastFailedMessage.value = null
-    loading.value = true
-
-    try {
-      const data = await startSession(currentUser.value.user_id)
-      console.log('Session started:', data)
-
-      if (data?.success && data?.data) {
-        currentSession.value = data.data.session_id
-        chatStarted.value = true
-
-        if (data.data.message) {
-          // First welcome message (no jobs expected here usually)
-          addBotMessage(data.data.message)
-        }
-      } else {
-        throw new Error('Invalid session response')
-      }
-    } catch (e) {
-      console.error('Failed to start session:', e)
-      error.value = 'Failed to start chat session. Please try again.'
-    } finally {
-      loading.value = false
-    }
-  }
 
   // Send message
   const sendMessage = async (text) => {
