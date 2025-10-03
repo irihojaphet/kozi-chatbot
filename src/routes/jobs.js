@@ -401,4 +401,72 @@ router.get('/cv/download/:cv_id', async (req, res) => {
   }
 });
 
+// Add this to src/routes/jobs.js temporarily for debugging
+
+// TEST ENDPOINT - Remove after debugging
+router.get('/test-external-api', async (req, res) => {
+  try {
+    const JOBS_API_URL = process.env.JOBS_API_URL || 'https://apis.kozi.rw/admin/select_jobss';
+    
+    console.log('Testing external API:', JOBS_API_URL);
+    
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    
+    const response = await fetch(JOBS_API_URL, { 
+      signal: controller.signal,
+      headers: { 'Accept': 'application/json' }
+    });
+    
+    clearTimeout(timeout);
+    
+    console.log('Response status:', response.status);
+    console.log('Response headers:', Object.fromEntries(response.headers.entries()));
+    
+    if (!response.ok) {
+      return res.status(response.status).json({
+        success: false,
+        error: `API returned ${response.status}`,
+        statusText: response.statusText
+      });
+    }
+    
+    const data = await response.json();
+    
+    console.log('Data type:', typeof data);
+    console.log('Is array:', Array.isArray(data));
+    console.log('Has data property:', !!data?.data);
+    console.log('Data keys:', Object.keys(data || {}));
+    
+    // Show first job as sample
+    const jobsArray = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : []);
+    console.log('Jobs count:', jobsArray.length);
+    
+    if (jobsArray.length > 0) {
+      console.log('First job sample:', JSON.stringify(jobsArray[0], null, 2));
+    }
+    
+    res.status(200).json({
+      success: true,
+      debug: {
+        url: JOBS_API_URL,
+        responseStatus: response.status,
+        dataType: typeof data,
+        isArray: Array.isArray(data),
+        hasDataProperty: !!data?.data,
+        jobsCount: jobsArray.length,
+        firstJobSample: jobsArray[0] || null,
+        allJobs: jobsArray
+      }
+    });
+  } catch (error) {
+    console.error('Test endpoint error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
+
 module.exports = router;
