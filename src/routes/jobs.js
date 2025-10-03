@@ -8,44 +8,154 @@ const logger = require('../core/utils/logger');
 const router = express.Router();
 const cvService = new CVGenerationService();
 
-// ============ JOB ROUTES ============
+/* =========================================================
+   External jobs feed (proxy)
+   ========================================================= */
 
-// GET /api/jobs - Get all active jobs (with optional filters)
+const JOBS_API_URL = process.env.JOBS_API_URL || 'https://apis.kozi.rw/admin/select_jobss';
+const DEFAULT_CURRENCY = 'RWF';
+
+// Minimal helpers (Node 18+/20+ has global fetch)
+function numOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function intOrNull(v) {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : null;
+}
+function dateOrNull(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+/**
+ * Normalize one raw job from upstream into your internal shape.
+ * If the upstream schema differs, adjust these mappings.
+ */
+function normalizeJob(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const j = {
+    id: raw.id ?? raw.job_id ?? raw.ID ?? null,
+    title: raw.title ?? raw.job_title ?? raw.position ?? 'Untitled',
+    category: raw.category ?? raw.job_category ?? 'General',
+    description: raw.description ?? raw.job_description ?? '',
+    requirements: raw.requirements ?? raw.requirement ?? '',
+
+    salary_min: numOrNull(raw.salary_min ?? raw.min_salary),
+    salary_max: numOrNull(raw.salary_max ?? raw.max_salary),
+    salary_currency: raw.salary_currency || DEFAULT_CURRENCY,
+
+    location: raw.location ?? raw.city ?? raw.district ?? raw.area ?? 'Kigali',
+    work_type: raw.work_type ?? raw.employment_type ?? 'full-time',
+
+    experience_level: raw.experience_level ?? raw.level ?? 'entry',
+    education_level: raw.education_level ?? raw.education ?? null,
+
+    status: (raw.status ?? 'active') || 'active',
+    positions_available: intOrNull(raw.positions_available ?? raw.slots ?? 1),
+    positions_filled: intOrNull(raw.positions_filled ?? 0),
+
+    posted_date: dateOrNull(raw.posted_date ?? raw.created_at ?? raw.date_posted),
+    application_deadline: dateOrNull(raw.application_deadline ?? raw.deadline),
+    start_date: dateOrNull(raw.start_date),
+
+    views: intOrNull(raw.views ?? 0),
+    applications_count: intOrNull(raw.applications_count ?? 0),
+  };
+
+  // require an id
+  if (j.id == null) return null;
+  return j;
+}
+
+async function fetchExternalJobs() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch(JOBS_API_URL, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`Upstream jobs API error ${res.status} ${res.statusText}`);
+    }
+    const json = await res.json();
+    // handle { data: [] } or []
+    const list = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
+    return list.map(normalizeJob).filter(Boolean);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/* =========================================================
+   JOB ROUTES (GETs now proxy external feed)
+   ========================================================= */
+
+// GET /api/jobs - Get jobs from external API (with optional filters)
 router.get('/', async (req, res) => {
   try {
-    const { category, location, experience_level, work_type, limit } = req.query;
+    const { category, location, experience_level, work_type, limit, status } = req.query;
 
-    const jobs = await Job.findActive({
-      category,
-      location,
-      experience_level,
-      work_type,
-      limit: limit || 50
-    });
+    let jobs = await fetchExternalJobs();
+
+    // lightweight filtering
+    if (status) {
+      const s = String(status).toLowerCase();
+      jobs = jobs.filter(j => (j.status || '').toLowerCase() === s);
+    } else {
+      // default to active if upstream mixes states
+      jobs = jobs.filter(j => (j.status || '').toLowerCase() === 'active');
+    }
+    if (category) {
+      const val = String(category).toLowerCase();
+      jobs = jobs.filter(j => (j.category || '').toLowerCase() === val);
+    }
+    if (location) {
+      const val = String(location).toLowerCase();
+      jobs = jobs.filter(j => (j.location || '').toLowerCase().includes(val));
+    }
+    if (experience_level) {
+      const val = String(experience_level).toLowerCase();
+      jobs = jobs.filter(j => (j.experience_level || '').toLowerCase() === val);
+    }
+    if (work_type) {
+      const val = String(work_type).toLowerCase();
+      jobs = jobs.filter(j => (j.work_type || '').toLowerCase() === val);
+    }
+
+    // sort by posted_date desc if present
+    jobs.sort((a, b) => String(b.posted_date || '').localeCompare(String(a.posted_date || '')));
+
+    const lim = Number(limit) || 50;
+    const sliced = jobs.slice(0, lim);
 
     res.status(HTTP_STATUS.OK).json({
       success: true,
       data: {
-        jobs,
-        count: jobs.length
+        jobs: sliced,
+        count: sliced.length
       }
     });
   } catch (error) {
-    logger.error('Failed to get jobs', { error: error.message });
-    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+    logger.error('Failed to proxy jobs', { error: error.message });
+    res.status(HTTP_STATUS.BAD_GATEWAY).json({
       success: false,
-      error: 'Failed to retrieve jobs'
+      error: 'Failed to retrieve jobs from upstream'
     });
   }
 });
 
-// GET /api/jobs/recommended/:user_id - Get recommended jobs for user
+// GET /api/jobs/recommended/:user_id - you can still compute recommendations locally,
+// but for now we fetch upstream and just slice.
 router.get('/recommended/:user_id', async (req, res) => {
   try {
-    const { user_id } = req.params;
-    const limit = req.query.limit || 10;
+    const limit = Number(req.query.limit) || 10;
+    let jobs = await fetchExternalJobs();
 
-    const jobs = await Job.findRecommended(user_id, limit);
+    // TODO: replace with real recommendation logic if/when available
+    jobs = jobs.filter(j => (j.status || '').toLowerCase() === 'active')
+               .slice(0, limit);
 
     res.status(HTTP_STATUS.OK).json({
       success: true,
@@ -55,20 +165,20 @@ router.get('/recommended/:user_id', async (req, res) => {
       }
     });
   } catch (error) {
-    logger.error('Failed to get recommended jobs', { error: error.message });
-    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+    logger.error('Failed to get recommended jobs (upstream)', { error: error.message });
+    res.status(HTTP_STATUS.BAD_GATEWAY).json({
       success: false,
       error: 'Failed to retrieve recommended jobs'
     });
   }
 });
 
-// GET /api/jobs/:job_id - Get single job details
+// GET /api/jobs/:job_id - Get single job details from external API
 router.get('/:job_id', async (req, res) => {
   try {
     const { job_id } = req.params;
-
-    const job = await Job.findById(job_id);
+    const jobs = await fetchExternalJobs();
+    const job = jobs.find(j => String(j.id) === String(job_id));
 
     if (!job) {
       return res.status(HTTP_STATUS.NOT_FOUND).json({
@@ -77,28 +187,33 @@ router.get('/:job_id', async (req, res) => {
       });
     }
 
-    // Increment view count
-    await Job.incrementViews(job_id);
-
+    // (We can't increment upstream views reliably; skip or implement downstream analytics)
     res.status(HTTP_STATUS.OK).json({
       success: true,
       data: job
     });
   } catch (error) {
-    logger.error('Failed to get job', { error: error.message });
-    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+    logger.error('Failed to get job (upstream)', { error: error.message });
+    res.status(HTTP_STATUS.BAD_GATEWAY).json({
       success: false,
       error: 'Failed to retrieve job'
     });
   }
 });
 
-// POST /api/jobs - Create new job (for employers)
+/* =========================================================
+   JOB APPLICATION ROUTES (unchanged - local DB)
+   NOTE: These still use your local Job & JobApplication models.
+   If you want to apply to EXTERNAL jobs, we must redesign:
+   - remove/relax FK constraint, or
+   - forward to an upstream "apply" endpoint.
+   ========================================================= */
+
+// POST /api/jobs - Create new job (for employers)  — still local
 router.post('/', async (req, res) => {
   try {
     const jobData = req.body;
 
-    // Validate required fields
     const required = ['employer_id', 'title', 'category', 'description', 'location', 'posted_date'];
     const missing = required.filter(field => !jobData[field]);
 
@@ -127,9 +242,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// ============ JOB APPLICATION ROUTES ============
-
-// POST /api/jobs/:job_id/apply - Apply to a job
+// POST /api/jobs/:job_id/apply - Apply to a job (local applications table)
 router.post('/:job_id/apply', async (req, res) => {
   try {
     const { job_id } = req.params;
@@ -142,12 +255,13 @@ router.post('/:job_id/apply', async (req, res) => {
       });
     }
 
-    // Check if job exists and is active
+    // This check uses LOCAL DB (because job_applications has FK to jobs).
+    // If you want to apply to EXTERNAL jobs, see note above.
     const job = await Job.findById(job_id);
     if (!job) {
       return res.status(HTTP_STATUS.NOT_FOUND).json({
         success: false,
-        error: 'Job not found'
+        error: 'Job not found (local DB)'
       });
     }
 
@@ -158,7 +272,6 @@ router.post('/:job_id/apply', async (req, res) => {
       });
     }
 
-    // Check if user already applied
     const hasApplied = await JobApplication.hasApplied(user_id, job_id);
     if (hasApplied) {
       return res.status(HTTP_STATUS.BAD_REQUEST).json({
@@ -167,7 +280,6 @@ router.post('/:job_id/apply', async (req, res) => {
       });
     }
 
-    // Create application
     const applicationId = await JobApplication.create({
       job_id,
       user_id,
@@ -191,7 +303,7 @@ router.post('/:job_id/apply', async (req, res) => {
   }
 });
 
-// GET /api/jobs/applications/:user_id - Get user's job applications
+// GET /api/jobs/applications/user/:user_id - Get user's job applications (local)
 router.get('/applications/user/:user_id', async (req, res) => {
   try {
     const { user_id } = req.params;
@@ -214,7 +326,9 @@ router.get('/applications/user/:user_id', async (req, res) => {
   }
 });
 
-// ============ CV GENERATION ROUTES ============
+/* =========================================================
+   CV GENERATION ROUTES (unchanged)
+   ========================================================= */
 
 // POST /api/cv/start - Start CV generation
 router.post('/cv/start', async (req, res) => {
@@ -266,13 +380,11 @@ router.get('/cv/user/:user_id', async (req, res) => {
   }
 });
 
-// GET /api/cv/download/:cv_id - Download CV
+// GET /api/cv/download/:cv_id - Download CV (placeholder)
 router.get('/cv/download/:cv_id', async (req, res) => {
   try {
     const { cv_id } = req.params;
 
-    // TODO: Implement CV PDF generation and download
-    // For now, return placeholder
     res.status(HTTP_STATUS.OK).json({
       success: true,
       message: 'CV download feature coming soon',
