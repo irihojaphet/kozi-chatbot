@@ -1,12 +1,16 @@
-// src/services/chatService.js - ENHANCED VERSION
+// src/services/chatService.js - CORRECTED VERSION WITH REAL-TIME JOBS
 const { ChatSession } = require('../core/db/models');
-const { Job, JobApplication } = require('../core/db/models/Job');
+const { JobApplication } = require('../core/db/models/Job');
 const RAGService = require('./ragService');
 const ProfileService = require('./profileService');
 const CVGenerationService = require('./cvGenerationService');
 const { CHAT_RESPONSES } = require('../config/constants');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../core/utils/logger');
+
+// Real-time jobs API configuration
+const JOBS_API_URL = process.env.JOBS_API_URL || 'https://apis.kozi.rw/admin/select_jobss';
+const DEFAULT_CURRENCY = 'RWF';
 
 class ChatService {
   constructor() {
@@ -39,53 +43,54 @@ class ChatService {
 
   async sendMessage(sessionId, userId, message) {
     try {
-      // Add user message to session
       await ChatSession.addMessage(sessionId, message, 'user');
 
       logger.info('chat-inbound', { sessionId, userId, msgPreview: String(message).slice(0, 140) });
 
-      // Check conversation context - are we in CV generation mode?
       const session = await ChatSession.findBySessionId(sessionId);
       const cvState = session.context?.cv_generation;
 
       if (cvState && cvState.current_step && !cvState.completed) {
-        // User is in CV generation flow
         return await this._handleCVGenerationFlow(sessionId, userId, message, cvState);
       }
 
-      // Detect user intent
       const intent = this._detectIntent(message);
 
-      let response;
+      let responseData;
       switch (intent) {
         case 'jobs':
-          response = await this._handleJobsIntent(sessionId, userId, message);
+          responseData = await this._handleJobsIntent(sessionId, userId, message);
           break;
         
         case 'cv_generation':
-          response = await this._handleCVGenerationIntent(sessionId, userId, message);
+          responseData = await this._handleCVGenerationIntent(sessionId, userId, message);
           break;
         
         case 'job_application':
-          response = await this._handleJobApplicationIntent(sessionId, userId, message);
+          responseData = await this._handleJobApplicationIntent(sessionId, userId, message);
           break;
         
         default:
-          // Default RAG-based response
-          response = await this._handleGeneralIntent(sessionId, userId, message);
+          responseData = await this._handleGeneralIntent(sessionId, userId, message);
       }
 
-      // Add assistant response to session
-      await ChatSession.addMessage(sessionId, response, 'assistant');
+      // Handle response format
+      const finalMessage = typeof responseData === 'string' ? responseData : responseData.message;
+      await ChatSession.addMessage(sessionId, finalMessage, 'assistant');
 
       logger.info('chat-outbound', {
         sessionId,
         userId,
         intent,
-        msgPreview: response.slice(0, 140)
+        msgPreview: finalMessage.slice(0, 140)
       });
 
-      return { message: response, intent };
+      // Return full response data including context for jobs
+      if (typeof responseData === 'object') {
+        return responseData;
+      }
+
+      return { message: finalMessage, intent };
     } catch (error) {
       logger.error('Message processing failed', { error: error.message, sessionId, userId });
       
@@ -96,13 +101,9 @@ class ChatService {
     }
   }
 
-  /**
-   * Detect user intent from message
-   */
   _detectIntent(message) {
     const text = message.toLowerCase();
 
-    // CV Generation intent
     if (
       /\b(create|write|make|generate|build|prepare|need)\s+(a\s+)?(cv|resume|curriculum vitae)\b/.test(text) ||
       /\b(cv|resume)\s+(creation|generation|preparation|help|assistance)\b/.test(text) ||
@@ -111,7 +112,6 @@ class ChatService {
       return 'cv_generation';
     }
 
-    // Job search intent
     if (
       /\b(find|search|look for|show|available|open)\s+(jobs?|positions?|opportunities?|vacancies?)\b/.test(text) ||
       /\bjobs?\s+(available|near me|in|for)\b/.test(text) ||
@@ -121,7 +121,6 @@ class ChatService {
       return 'jobs';
     }
 
-    // Job application intent
     if (
       /\b(apply|applying|application)\s+(for|to)?\s*(job|position)\b/.test(text) ||
       /\bhow.*apply\b/.test(text)
@@ -133,195 +132,313 @@ class ChatService {
   }
 
   /**
-   * Handle jobs-related queries
+   * CRITICAL: Fetch jobs from EXTERNAL API, not database
+   */
+  async _fetchRealtimeJobs(filters = {}) {
+    try {
+      logger.info('Fetching jobs from external API', { url: JOBS_API_URL, filters });
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+
+      const response = await fetch(JOBS_API_URL, { 
+        signal: controller.signal,
+        headers: { 'Accept': 'application/json' }
+      });
+      
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        throw new Error(`API returned ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      logger.info('External API response received', { 
+        hasData: !!data,
+        isArray: Array.isArray(data),
+        dataKeys: data ? Object.keys(data) : []
+      });
+
+      // Handle different response formats
+      const jobsArray = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : []);
+
+      if (jobsArray.length === 0) {
+        logger.warn('No jobs returned from external API');
+        return [];
+      }
+
+      logger.info(`Processing ${jobsArray.length} jobs from external API`);
+
+      // Normalize jobs
+      let normalizedJobs = jobsArray
+        .map(job => this._normalizeJob(job))
+        .filter(Boolean);
+
+      logger.info(`Normalized ${normalizedJobs.length} jobs`);
+
+      // Apply filters
+      if (filters.category) {
+        const cat = filters.category.toLowerCase();
+        normalizedJobs = normalizedJobs.filter(j => 
+          (j.category || '').toLowerCase().includes(cat)
+        );
+      }
+
+      if (filters.location) {
+        const loc = filters.location.toLowerCase();
+        normalizedJobs = normalizedJobs.filter(j => 
+          (j.location || '').toLowerCase().includes(loc)
+        );
+      }
+
+      if (filters.work_type) {
+        const type = filters.work_type.toLowerCase();
+        normalizedJobs = normalizedJobs.filter(j => 
+          (j.work_type || '').toLowerCase() === type
+        );
+      }
+
+      // Filter active jobs with available positions
+      normalizedJobs = normalizedJobs.filter(j => {
+        const isActive = (j.status || '').toLowerCase() === 'active';
+        const hasPositions = (j.positions_available || 0) > (j.positions_filled || 0);
+        return isActive && hasPositions;
+      });
+
+      logger.info(`Final filtered jobs count: ${normalizedJobs.length}`);
+
+      return normalizedJobs;
+    } catch (error) {
+      logger.error('Failed to fetch external jobs', { 
+        error: error.message,
+        stack: error.stack,
+        url: JOBS_API_URL
+      });
+      return [];
+    }
+  }
+
+  _normalizeJob(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+
+    const job = {
+      id: raw.id ?? raw.job_id ?? raw.ID ?? null,
+      title: raw.title ?? raw.job_title ?? raw.position ?? 'Untitled Position',
+      category: raw.category ?? raw.job_category ?? raw.type ?? 'General',
+      description: raw.description ?? raw.job_description ?? raw.details ?? '',
+      requirements: raw.requirements ?? raw.requirement ?? '',
+      salary_min: this._parseNumber(raw.salary_min ?? raw.min_salary ?? raw.minSalary),
+      salary_max: this._parseNumber(raw.salary_max ?? raw.max_salary ?? raw.maxSalary),
+      salary_currency: raw.salary_currency ?? raw.currency ?? DEFAULT_CURRENCY,
+      location: raw.location ?? raw.city ?? raw.district ?? raw.area ?? 'Kigali',
+      work_type: raw.work_type ?? raw.employment_type ?? raw.type ?? 'full-time',
+      experience_level: raw.experience_level ?? raw.level ?? 'entry',
+      status: (raw.status ?? 'active').toString().toLowerCase(),
+      positions_available: parseInt(raw.positions_available ?? raw.openings ?? raw.slots ?? 1) || 1,
+      positions_filled: parseInt(raw.positions_filled ?? raw.filled ?? 0) || 0,
+      posted_date: raw.posted_date ?? raw.created_at ?? raw.date_posted ?? new Date().toISOString(),
+      application_deadline: raw.application_deadline ?? raw.deadline ?? raw.closing_date
+    };
+
+    return job.id ? job : null;
+  }
+
+  _parseNumber(val) {
+    if (val === null || val === undefined || val === '') return null;
+    const num = Number(val);
+    return Number.isFinite(num) && num >= 0 ? num : null;
+  }
+
+  /**
+   * Handle jobs intent - CLEAN FORMATTING (NO EMOJIS/SPECIAL CHARS)
    */
   async _handleJobsIntent(sessionId, userId, message) {
     try {
-      // Get user profile for personalized recommendations
       const profile = await this.profileService.getProfileStatus(userId);
-
-      // Extract job preferences from message
       const preferences = this._extractJobPreferences(message);
+      
+      logger.info('Handling jobs intent', { preferences });
 
-      // Get jobs (recommended if no specific filters, otherwise filtered)
-      let jobs;
-      if (Object.keys(preferences).length > 0) {
-        jobs = await Job.findActive({ ...preferences, limit: 10 });
-      } else {
-        jobs = await Job.findRecommended(userId, 10);
-      }
+      // FETCH FROM EXTERNAL API
+      const jobs = await this._fetchRealtimeJobs(preferences);
 
       if (jobs.length === 0) {
-        return "I couldn't find any jobs matching your criteria right now. 😕\n\nWould you like me to:\n• Show all available jobs\n• Help you update your profile to increase job matches\n• Set up job alerts for your preferences";
+        return {
+          message: "I couldn't find any jobs matching your criteria right now.\n\nWould you like me to:\n• Show all available jobs\n• Help you update your profile\n• Search for different job types",
+          intent: 'jobs'
+        };
       }
 
-      // Format jobs response
-      let response = `🎯 I found ${jobs.length} job ${jobs.length === 1 ? 'opportunity' : 'opportunities'} for you!\n\n`;
+      // Format response - CLEAN, NO SPECIAL CHARACTERS
+      let response = `I found ${jobs.length} job ${jobs.length === 1 ? 'opportunity' : 'opportunities'} for you!\n\n`;
 
       jobs.slice(0, 5).forEach((job, index) => {
         const salary = job.salary_min && job.salary_max 
-          ? `💰 ${job.salary_min.toLocaleString()} - ${job.salary_max.toLocaleString()} ${job.salary_currency}`
-          : '💰 Salary negotiable';
+          ? `${this._formatNumber(job.salary_min)} - ${this._formatNumber(job.salary_max)} ${job.salary_currency}`
+          : 'Salary negotiable';
 
-        response += `**${index + 1}. ${job.title}**\n`;
-        response += `📍 ${job.location} | 💼 ${job.work_type}\n`;
-        response += `${salary}\n`;
-        response += `👥 ${job.positions_available - job.positions_filled} positions available\n`;
+        response += `${index + 1}. ${job.title}\n`;
+        response += `Location: ${job.location} | Type: ${this._formatWorkType(job.work_type)}\n`;
+        response += `Salary: ${salary}\n`;
+        response += `Positions available: ${job.positions_available - job.positions_filled}\n`;
         
         if (job.application_deadline) {
-          response += `⏰ Deadline: ${new Date(job.application_deadline).toLocaleDateString()}\n`;
+          const deadline = new Date(job.application_deadline);
+          if (!isNaN(deadline.getTime())) {
+            response += `Deadline: ${deadline.toLocaleDateString()}\n`;
+          }
         }
         
         response += `\n`;
       });
 
       if (jobs.length > 5) {
-        response += `\n... and ${jobs.length - 5} more jobs!\n`;
+        response += `... and ${jobs.length - 5} more jobs!\n\n`;
       }
 
-      response += `\n✨ To view full details or apply, say: "Show me job #1" or "Apply to job #2"\n`;
-      response += `\nYour profile is ${profile.completion_percentage}% complete. ${profile.completion_percentage < 80 ? 'Complete it to improve your chances! 🚀' : 'Great job! 🎉'}`;
+      response += `To view details or apply, say: "Show me job number 1" or "Apply to job number 2"\n\n`;
+      response += `Your profile is ${profile.completion_percentage}% complete. `;
+      response += profile.completion_percentage < 80 
+        ? 'Complete it to improve your chances!' 
+        : 'Great job!';
 
-      // Save jobs to session context for reference
+      // Save jobs to context
       await ChatSession.updateContext(sessionId, {
-        last_jobs: jobs.map(j => ({ id: j.id, title: j.title })),
-        last_jobs_timestamp: Date.now()
+        last_jobs: jobs,
+        last_jobs_timestamp: Date.now(),
+        intent: 'jobs'
       });
 
-      return response;
+      // Return with jobs array for frontend
+      return {
+        message: response,
+        intent: 'jobs',
+        context: {
+          last_jobs: jobs
+        }
+      };
     } catch (error) {
-      logger.error('Failed to handle jobs intent', { error: error.message });
-      return "I had trouble fetching jobs right now. Please try again in a moment.";
+      logger.error('Failed to handle jobs intent', { error: error.message, stack: error.stack });
+      return {
+        message: "I had trouble fetching jobs right now. Please try again in a moment.",
+        intent: 'jobs'
+      };
     }
   }
 
-  /**
-   * Handle CV generation intent
-   */
+  _formatNumber(num) {
+    return new Intl.NumberFormat('en-US').format(num);
+  }
+
+  _formatWorkType(type) {
+    const types = {
+      'full-time': 'Full-Time',
+      'part-time': 'Part-Time',
+      'contract': 'Contract',
+      'temporary': 'Temporary'
+    };
+    return types[type] || type;
+  }
+
   async _handleCVGenerationIntent(sessionId, userId, message) {
     try {
       const result = await this.cvService.startCVGeneration(userId, sessionId);
 
       if (result.hasProgress) {
-        // User has CV in progress
         const continueIntent = /\b(yes|continue|resume|proceed)\b/i.test(message);
         const startFreshIntent = /\b(no|new|fresh|start over|restart)\b/i.test(message);
 
         if (continueIntent) {
-          return `Great! Let's continue. ${this.cvService.stepPrompts[result.currentStep]}`;
+          return { message: `Great! Let's continue. ${this.cvService.stepPrompts[result.currentStep]}` };
         } else if (startFreshIntent) {
-          // Reset CV generation
           await this.cvService.saveCVGenerationState(sessionId, userId, {
             current_step: 'contact_info',
             completed_steps: [],
             cv_data: {}
           });
-          return this.cvService.stepPrompts.contact_info;
+          return { message: this.cvService.stepPrompts.contact_info };
         } else {
-          return result.message;
+          return { message: result.message };
         }
       }
 
-      return result.message;
+      return { message: result.message };
     } catch (error) {
       logger.error('Failed to handle CV generation intent', { error: error.message });
-      return "I had trouble starting CV generation. Please try again.";
+      return { message: "I had trouble starting CV generation. Please try again." };
     }
   }
 
-  /**
-   * Handle CV generation flow (user is actively building CV)
-   */
   async _handleCVGenerationFlow(sessionId, userId, message, cvState) {
     try {
-      // Check if user wants to cancel
       if (/\b(cancel|stop|quit|exit)\b/i.test(message)) {
         await ChatSession.updateContext(sessionId, {
           cv_generation: { ...cvState, completed: true }
         });
-        return "CV generation cancelled. Your progress has been saved. You can resume anytime by saying 'create my CV'.";
+        return { message: "CV generation cancelled. Your progress has been saved." };
       }
 
-      // Process current step
-      const result = await this.cvService.processStep(
-        sessionId,
-        message,
-        cvState.current_step
-      );
+      const result = await this.cvService.processStep(sessionId, message, cvState.current_step);
 
       if (result.completed) {
-        // Mark CV generation as completed
         await ChatSession.updateContext(sessionId, {
           cv_generation: { ...cvState, completed: true }
         });
       }
 
-      return result.message;
+      return { message: result.message };
     } catch (error) {
       logger.error('Failed to handle CV generation flow', { error: error.message });
-      return "I had trouble processing that information. Could you please rephrase or provide the information again?";
+      return { message: "I had trouble processing that. Could you please rephrase?" };
     }
   }
 
-  /**
-   * Handle job application intent
-   */
   async _handleJobApplicationIntent(sessionId, userId, message) {
     try {
-      // Extract job ID from message if specified
-      const jobIdMatch = message.match(/job\s*#?(\d+)/i);
+      const jobIdMatch = message.match(/job\s*(?:number\s*)?#?(\d+)/i);
       
       if (!jobIdMatch) {
-        return "Which job would you like to apply to? Please say 'Apply to job #1' or specify the job number from the list I showed you.";
+        return { message: "Which job would you like to apply to? Please say 'Apply to job number 1'." };
       }
 
-      // Get job from context
       const session = await ChatSession.findBySessionId(sessionId);
       const lastJobs = session.context?.last_jobs;
 
       if (!lastJobs || lastJobs.length === 0) {
-        return "I don't see any recent job listings. Please search for jobs first by saying 'Show me available jobs'.";
+        return { message: "I don't see any recent job listings. Please search for jobs first." };
       }
 
       const jobIndex = parseInt(jobIdMatch[1]) - 1;
       const selectedJob = lastJobs[jobIndex];
 
       if (!selectedJob) {
-        return `I couldn't find job #${jobIndex + 1}. Please check the job number and try again.`;
+        return { message: `I couldn't find job number ${jobIndex + 1}. Please check the number.` };
       }
 
-      // Check if user has already applied
-      const hasApplied = await JobApplication.hasApplied(userId, selectedJob.id);
-      
-      if (hasApplied) {
-        return `You've already applied to "${selectedJob.title}". I'll notify you when the employer reviews your application! 🎉`;
-      }
-
-      // Check profile completion
       const profile = await this.profileService.getProfileStatus(userId);
       
       if (profile.completion_percentage < 60) {
-        return `To apply for jobs, you need to complete at least 60% of your profile. You're currently at ${profile.completion_percentage}%.\n\n❌ Missing: ${profile.missing_fields.join(', ')}\n\nWould you like me to help you complete your profile first?`;
+        return { 
+          message: `To apply, complete at least 60% of your profile. You're at ${profile.completion_percentage}%.\n\nMissing: ${profile.missing_fields.join(', ')}\n\nShall I help you complete it?` 
+        };
       }
 
-      // Create application
       await JobApplication.create({
         job_id: selectedJob.id,
         user_id: userId,
-        cover_letter: `Application submitted via Kozi chatbot`,
+        cover_letter: `Application via Kozi chatbot`,
         cv_file_path: profile.profile_data.cv_file_path
       });
 
-      return `🎉 Success! You've applied to "${selectedJob.title}"!\n\nYour application has been submitted to the employer. They'll review it and contact you if you're a good match.\n\n✨ Tips while you wait:\n• Keep your phone handy\n• Complete your profile to 100%\n• Apply to similar jobs to increase your chances\n\nGood luck! 🍀`;
+      return { 
+        message: `Success! You've applied to "${selectedJob.title}"!\n\nThe employer will review your application and contact you.\n\nTips:\n• Keep your phone handy\n• Complete your profile to 100%\n• Apply to similar jobs\n\nGood luck!` 
+      };
     } catch (error) {
       logger.error('Failed to handle job application', { error: error.message });
-      return "I had trouble submitting your application. Please try again or contact support.";
+      return { message: "I had trouble submitting your application. Please try again." };
     }
   }
 
-  /**
-   * Handle general intent (existing RAG logic)
-   */
   async _handleGeneralIntent(sessionId, userId, message) {
     const profileStatus = await this.profileService.getProfileStatus(userId);
     const session = await ChatSession.findBySessionId(sessionId);
@@ -341,18 +458,14 @@ class ChatService {
       topics_discussed: this._extractTopics(message)
     });
 
-    return response;
+    return { message: response };
   }
 
-  /**
-   * Extract job preferences from message
-   */
   _extractJobPreferences(message) {
     const preferences = {};
     const text = message.toLowerCase();
 
-    // Extract category
-    const categories = ['cleaning', 'security', 'childcare', 'cooking', 'gardening', 'driver'];
+    const categories = ['cleaning', 'security', 'childcare', 'cooking', 'gardening', 'driver', 'housekeeping'];
     for (const cat of categories) {
       if (text.includes(cat)) {
         preferences.category = cat;
@@ -360,8 +473,7 @@ class ChatService {
       }
     }
 
-    // Extract location
-    const locations = ['kigali', 'nyarugenge', 'gasabo', 'kicukiro'];
+    const locations = ['kigali', 'nyarugenge', 'gasabo', 'kicukiro', 'musanze', 'huye', 'rubavu'];
     for (const loc of locations) {
       if (text.includes(loc)) {
         preferences.location = loc;
@@ -369,7 +481,6 @@ class ChatService {
       }
     }
 
-    // Extract work type
     if (text.includes('full-time') || text.includes('full time')) {
       preferences.work_type = 'full-time';
     } else if (text.includes('part-time') || text.includes('part time')) {
@@ -381,20 +492,18 @@ class ChatService {
 
   _extractTopics(message) {
     const topicMap = {
-      profile: ['profile', 'complete', 'update', 'information'],
+      profile: ['profile', 'complete', 'update'],
       cv: ['cv', 'resume', 'curriculum'],
-      jobs: ['job', 'work', 'employment', 'apply', 'application', 'hiring'],
-      documents: ['upload', 'document', 'id', 'photo', 'file'],
-      help: ['help', 'support', 'assist', 'guide']
+      jobs: ['job', 'work', 'employment', 'apply'],
+      documents: ['upload', 'document', 'id', 'photo'],
+      help: ['help', 'support', 'assist']
     };
 
     const messageWords = String(message || '').toLowerCase().split(/\s+/);
     const detectedTopics = [];
 
     Object.entries(topicMap).forEach(([topic, keywords]) => {
-      if (keywords.some(keyword =>
-        messageWords.some(word => word.includes(keyword))
-      )) {
+      if (keywords.some(keyword => messageWords.some(word => word.includes(keyword)))) {
         detectedTopics.push(topic);
       }
     });
@@ -402,7 +511,6 @@ class ChatService {
     return detectedTopics;
   }
 
-  // Existing methods remain...
   async getSessionHistory(sessionId) {
     try {
       const session = await ChatSession.findBySessionId(sessionId);
@@ -423,7 +531,7 @@ class ChatService {
     try {
       await ChatSession.deactivate(sessionId);
       logger.info('Chat session ended', { sessionId });
-      return { message: 'Session ended. Thank you for using Kozi!' };
+      return { message: 'Session ended. Thank you!' };
     } catch (error) {
       logger.error('Failed to end session', { error: error.message, sessionId });
       throw error;
